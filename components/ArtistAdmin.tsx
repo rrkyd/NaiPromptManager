@@ -470,6 +470,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                         <tbody>
                             {users.map(u => {
                                 const usagePercent = u.maxStorage ? Math.min(100, ((u.storageUsage || 0) / u.maxStorage) * 100) : 0;
+                                const isAdminUser = u.role === 'admin';
                                 return (
                                 <tr key={u.id} className="border-b dark:border-gray-700 last:border-0 dark:text-white">
                                     <td className="p-4">{u.username}</td>
@@ -477,34 +478,43 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                                     <td className="p-4 text-sm text-gray-500">{formatDate(u.createdAt)}</td>
                                     <td className="p-4 text-sm text-gray-500">{formatDateTime(u.lastLogin)}</td>
                                     <td className="p-4">
-                                        <div className="text-xs text-gray-500 mb-1">
-                                            {formatBytes(u.storageUsage)} / {formatBytes(u.maxStorage)}
-                                        </div>
-                                        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 overflow-hidden">
-                                            <div
-                                                className={`h-full rounded-full transition-all ${usagePercent > 90 ? 'bg-red-500' : usagePercent > 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
-                                                style={{ width: `${usagePercent}%` }}
-                                            ></div>
-                                        </div>
-                                        {editingQuotaUserId === u.id ? (
-                                            <div className="flex gap-1 mt-2">
-                                                <input
-                                                    type="number"
-                                                    value={newQuotaMB}
-                                                    onChange={e => setNewQuotaMB(e.target.value)}
-                                                    className="w-20 p-1 text-xs border rounded dark:bg-gray-900 dark:border-gray-600 dark:text-white"
-                                                    placeholder="MB"
-                                                />
-                                                <button onClick={() => handleUpdateQuota(u.id)} className="text-xs text-green-600 hover:text-green-700">保存</button>
-                                                <button onClick={() => { setEditingQuotaUserId(null); setNewQuotaMB(''); }} className="text-xs text-gray-500 hover:text-gray-700">取消</button>
+                                        {isAdminUser ? (
+                                            <div className="text-xs text-gray-500">
+                                                <span className="text-green-600 dark:text-green-400 font-medium">无限制</span>
+                                                <div className="text-gray-400 mt-1">管理员不受存储配额限制</div>
                                             </div>
                                         ) : (
-                                            <button
-                                                onClick={() => { setEditingQuotaUserId(u.id); setNewQuotaMB(String(Math.round((u.maxStorage || 0) / (1024 * 1024)))); }}
-                                                className="text-xs text-indigo-500 hover:text-indigo-700 mt-1"
-                                            >
-                                                修改配额
-                                            </button>
+                                            <>
+                                                <div className="text-xs text-gray-500 mb-1">
+                                                    {formatBytes(u.storageUsage)} / {formatBytes(u.maxStorage)}
+                                                </div>
+                                                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all ${usagePercent > 90 ? 'bg-red-500' : usagePercent > 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                                                        style={{ width: `${usagePercent}%` }}
+                                                    ></div>
+                                                </div>
+                                                {editingQuotaUserId === u.id ? (
+                                                    <div className="flex gap-1 mt-2">
+                                                        <input
+                                                            type="number"
+                                                            value={newQuotaMB}
+                                                            onChange={e => setNewQuotaMB(e.target.value)}
+                                                            className="w-20 p-1 text-xs border rounded dark:bg-gray-900 dark:border-gray-600 dark:text-white"
+                                                            placeholder="MB"
+                                                        />
+                                                        <button onClick={() => handleUpdateQuota(u.id)} className="text-xs text-green-600 hover:text-green-700">保存</button>
+                                                        <button onClick={() => { setEditingQuotaUserId(null); setNewQuotaMB(''); }} className="text-xs text-gray-500 hover:text-gray-700">取消</button>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => { setEditingQuotaUserId(u.id); setNewQuotaMB(String(Math.round((u.maxStorage || 0) / (1024 * 1024)))); }}
+                                                        className="text-xs text-indigo-500 hover:text-indigo-700 mt-1"
+                                                    >
+                                                        修改配额
+                                                    </button>
+                                                )}
+                                            </>
                                         )}
                                     </td>
                                     <td className="p-4">
