@@ -31,13 +31,66 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
     const [publishTitle, setPublishTitle] = useState('');
     const [showSuccessModal, setShowSuccessModal] = useState(false);
 
+    // 分页相关状态
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+    const [totalCount, setTotalCount] = useState(0);
+    const [isLoading, setIsLoading] = useState(false);
+
+    // 清理相关状态
+    const [showCleanMenu, setShowCleanMenu] = useState(false);
+    const [showCleanModal, setShowCleanModal] = useState(false);
+    const [cleanMode, setCleanMode] = useState<'days' | 'count'>('days');
+    const [cleanDays, setCleanDays] = useState(7);
+    const [cleanCount, setCleanCount] = useState(100);
+    const [cleanPreviewCount, setCleanPreviewCount] = useState(0);
+
     useEffect(() => {
-        loadData();
+        loadData(true);
     }, []);
 
-    const loadData = async () => {
-        const data = await localHistory.getAll();
-        setItems(data);
+    const PAGE_SIZE = 20;
+    const MAX_CACHED_PAGES = 3;
+
+    const loadData = async (reset = false) => {
+        if (isLoading) return;
+        
+        setIsLoading(true);
+        try {
+            // 获取总数
+            const count = await localHistory.getCount();
+            setTotalCount(count);
+            
+            if (reset) {
+                // 重置加载第一页
+                const data = await localHistory.getPage(0, PAGE_SIZE);
+                setItems(data);
+                setPage(1);
+                setHasMore(data.length === PAGE_SIZE && count > PAGE_SIZE);
+            } else {
+                // 加载下一页
+                const data = await localHistory.getPage(page, PAGE_SIZE);
+                if (data.length > 0) {
+                    setItems(prev => {
+                        const newItems = [...prev, ...data];
+                        // 最多保留 MAX_CACHED_PAGES 页数据
+                        const maxItems = PAGE_SIZE * MAX_CACHED_PAGES;
+                        if (newItems.length > maxItems) {
+                            return newItems.slice(-maxItems);
+                        }
+                        return newItems;
+                    });
+                    setPage(prev => prev + 1);
+                    setHasMore(items.length + data.length < count);
+                } else {
+                    setHasMore(false);
+                }
+            }
+        } catch (e) {
+            console.error('加载历史记录失败:', e);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const getDownloadFilename = () => {
@@ -60,6 +113,38 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
         if (confirm('确定清空所有本地生图历史吗？')) {
             await localHistory.clear();
             setItems([]);
+            setTotalCount(0);
+            setShowCleanMenu(false);
+        }
+    };
+
+    const handleCleanMenuClick = (mode: 'days' | 'count') => {
+        setCleanMode(mode);
+        setShowCleanMenu(false);
+        setShowCleanModal(true);
+        
+        // 预览将删除的数量
+        if (mode === 'days') {
+            localHistory.countOlderThan(cleanDays).then(setCleanPreviewCount);
+        } else {
+            localHistory.getCount().then(count => {
+                setCleanPreviewCount(Math.max(0, count - cleanCount));
+            });
+        }
+    };
+
+    const handleCleanConfirm = async () => {
+        try {
+            if (cleanMode === 'days') {
+                await localHistory.deleteOlderThan(cleanDays);
+            } else {
+                await localHistory.keepOnly(cleanCount);
+            }
+            setShowCleanModal(false);
+            loadData(true); // 重新加载第一页
+            notify('清理完成');
+        } catch (e: any) {
+            notify('清理失败: ' + e.message, 'error');
         }
     };
 
@@ -101,9 +186,44 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
                     <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">本地生图历史</h1>
                     <p className="text-xs text-gray-500 dark:text-gray-400">仅存储在您的浏览器中</p>
                 </div>
-                <div className="flex gap-2 md:gap-3">
-                    <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center">共 {items.length} 张</div>
-                    <button onClick={handleClearAll} className="px-3 py-1 md:px-4 md:py-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-xs md:text-sm hover:bg-red-200 dark:hover:bg-red-900/50">清空</button>
+                <div className="flex gap-2 md:gap-3 items-center">
+                    <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center">共 {totalCount} 张</div>
+                    <div className="relative">
+                        <button 
+                            onClick={() => setShowCleanMenu(!showCleanMenu)} 
+                            className="px-3 py-1 md:px-4 md:py-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-xs md:text-sm hover:bg-red-200 dark:hover:bg-red-900/50 flex items-center gap-1"
+                        >
+                            清理
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        {showCleanMenu && (
+                            <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-20">
+                                <button 
+                                    onClick={handleClearAll} 
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 rounded-t-lg"
+                                >
+                                    🗑️ 清空全部
+                                </button>
+                                <button 
+                                    onClick={() => handleCleanMenuClick('days')} 
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                                >
+                                    ⏰ 删除 X 天前的...
+                                </button>
+                                <button 
+                                    onClick={() => handleCleanMenuClick('count')} 
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 rounded-b-lg"
+                                >
+                                    📊 只保留最近 N 张...
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    <button onClick={() => loadData(true)} className="px-3 py-1 md:px-4 md:py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded text-xs md:text-sm hover:bg-gray-200 dark:hover:bg-gray-600">
+                        刷新
+                    </button>
                 </div>
             </header>
 
@@ -115,26 +235,51 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
                         <p className="text-sm mt-2">在 Chain 编辑器中生成图片会自动保存到这里</p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-4">
-                        {items.map(item => (
-                            <div
-                                key={item.id}
-                                className="group relative aspect-square bg-gray-200 dark:bg-gray-800 rounded-lg overflow-hidden cursor-pointer border border-gray-200 dark:border-gray-700 hover:border-indigo-500 transition-colors"
-                                onClick={() => setLightbox(item)}
-                            >
-                                <img src={item.imageUrl} className="w-full h-full object-cover" loading="lazy" />
-                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
-                                <div className="absolute top-2 right-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={(e) => handleDelete(item.id, e)} className="p-1.5 bg-red-500 text-white rounded-full shadow hover:bg-red-600">
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    <>
+                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-4">
+                            {items.map(item => (
+                                <div
+                                    key={item.id}
+                                    className="group relative aspect-square bg-gray-200 dark:bg-gray-800 rounded-lg overflow-hidden cursor-pointer border border-gray-200 dark:border-gray-700 hover:border-indigo-500 transition-colors"
+                                    onClick={() => setLightbox(item)}
+                                >
+                                    <img src={item.imageUrl} className="w-full h-full object-cover" loading="lazy" />
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+                                    <div className="absolute top-2 right-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onClick={(e) => handleDelete(item.id, e)} className="p-1.5 bg-red-500 text-white rounded-full shadow hover:bg-red-600">
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                        </button>
+                                    </div>
+                                    <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent text-white text-[10px] opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity truncate">
+                                        {new Date(item.createdAt).toLocaleString()}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        
+                        {/* 底部加载区域 */}
+                        <div className="flex flex-col items-center justify-center py-8">
+                            {isLoading ? (
+                                <div className="text-gray-500 dark:text-gray-400">⏳ 加载中...</div>
+                            ) : hasMore ? (
+                                <>
+                                    <button
+                                        onClick={() => loadData(false)}
+                                        className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-lg transition-colors"
+                                    >
+                                        加载更多
                                     </button>
-                                </div>
-                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent text-white text-[10px] opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity truncate">
-                                    {new Date(item.createdAt).toLocaleString()}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                                        已加载 {items.length} / {totalCount} 张
+                                    </p>
+                                </>
+                            ) : (
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                    ✓ 已加载全部 {totalCount} 张
+                                </p>
+                            )}
+                        </div>
+                    </>
                 )}
             </div>
 
@@ -228,6 +373,71 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
                 </div>
             )}
 
+
+            {/* Clean Modal */}
+            {showCleanModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 max-w-sm w-full shadow-2xl">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">⚠️ 确认清理</h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                            {cleanMode === 'days' 
+                                ? `将删除 ${cleanDays} 天前的 ${cleanPreviewCount} 张图片`
+                                : `当前共 ${totalCount} 张，将删除 ${cleanPreviewCount} 张，只保留最近 ${cleanCount} 张`
+                            }
+                        </p>
+                        <p className="text-xs text-red-500 mb-4">此操作无法恢复</p>
+                        
+                        <div className="mb-4">
+                            {cleanMode === 'days' ? (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">天数</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={cleanDays}
+                                        onChange={e => {
+                                            setCleanDays(Number(e.target.value));
+                                            localHistory.countOlderThan(Number(e.target.value)).then(setCleanPreviewCount);
+                                        }}
+                                        className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm outline-none dark:text-white"
+                                    />
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">保留数量</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={cleanCount}
+                                        onChange={e => {
+                                            setCleanCount(Number(e.target.value));
+                                            localHistory.getCount().then(count => {
+                                                setCleanPreviewCount(Math.max(0, count - Number(e.target.value)));
+                                            });
+                                        }}
+                                        className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm outline-none dark:text-white"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setShowCleanModal(false)}
+                                className="flex-1 py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg font-bold"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleCleanConfirm}
+                                className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold"
+                            >
+                                确认删除
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Success Modal */}
             {showSuccessModal && (
