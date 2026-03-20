@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { localHistory } from '../services/localHistory';
 import { db } from '../services/dbService';
 import { LocalGenItem, User } from '../types';
@@ -40,6 +40,9 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
     
     // 缓存管理
     const [pageCache, setPageCache] = useState<Record<number, LocalGenItem[]>>({});
+    const pageCacheRef = useRef<Record<number, LocalGenItem[]>>({});
+    const inflightPagesRef = useRef<Record<number, Promise<LocalGenItem[]>>>({});
+    const preloadedImagesRef = useRef<Set<string>>(new Set());
 
     // 清理相关状态
     const [showCleanMenu, setShowCleanMenu] = useState(false);
@@ -53,81 +56,87 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
         goToPage(1);
     }, []);
 
-    const { PAGE_SIZE, MAX_CACHED_PAGES } = PAGINATION_CONFIG;
+    const { PAGE_SIZE } = PAGINATION_CONFIG;
 
-    // 内存管理：估算单条记录大小（字节）
-    const estimateItemSize = (item: LocalGenItem): number => {
-        // 基础字段大小估算
-        const baseSize = 100; // id, createdAt等基础字段
-        const promptSize = (item.prompt?.length || 0) * 2; // UTF-16编码
-        // base64 图片通常是 ASCII 字符（1字节/字符），不是 UTF-16
-        const imageUrlSize = (item.imageUrl?.length || 0) * 1;
-        const paramsSize = JSON.stringify(item.params || {}).length * 2;
-        return baseSize + promptSize + imageUrlSize + paramsSize;
+    const setCacheState = (nextCache: Record<number, LocalGenItem[]>) => {
+        pageCacheRef.current = nextCache;
+        setPageCache(nextCache);
     };
 
-    // 内存管理：检查缓存大小是否合理
-    const checkMemoryUsage = (items: LocalGenItem[]): boolean => {
-        const MAX_CACHE_SIZE = 50 * 1024 * 1024; // 50MB最大缓存
-        let totalSize = 0;
-        for (const item of items) {
-            totalSize += estimateItemSize(item);
-            if (totalSize > MAX_CACHE_SIZE) {
-                console.warn('缓存大小超过限制，执行清理');
-                return false;
+    const preloadImages = (targetItems: LocalGenItem[]) => {
+        targetItems.forEach(item => {
+            if (!item.imageUrl || preloadedImagesRef.current.has(item.imageUrl)) {
+                return;
             }
-        }
-        return true;
+
+            const image = new Image();
+            image.src = item.imageUrl;
+            preloadedImagesRef.current.add(item.imageUrl);
+        });
+    };
+
+    const trimCacheAroundPage = (centerPage: number, totalPages: number, extraPages: Record<number, LocalGenItem[]> = {}) => {
+        const validPages = [centerPage - 1, centerPage, centerPage + 1].filter(page => page >= 1 && page <= totalPages);
+        const nextCache: Record<number, LocalGenItem[]> = {};
+
+        validPages.forEach(page => {
+            const data = extraPages[page] ?? pageCacheRef.current[page];
+            if (data) {
+                nextCache[page] = data;
+            }
+        });
+
+        setCacheState(nextCache);
     };
 
     // 获取页面数据（优先从缓存）
     const getPageData = async (page: number): Promise<LocalGenItem[]> => {
-        // 检查缓存
-        if (pageCache[page]) {
-            return pageCache[page];
+        const cached = pageCacheRef.current[page];
+        if (cached) {
+            return cached;
         }
-        
-        // 从数据库加载
-        const data = await localHistory.getPage(page - 1, PAGE_SIZE);
-        return data;
-    };
 
-    // 更新缓存并清理过远的缓存（仅在 goToPage 中调用，基于当前显示页清理）
-    const updateCacheAndClean = (currentPage: number, data: LocalGenItem[]) => {
-        // 定义需要保留的页码范围（当前页 ± 1 页）
-        const validPages = [currentPage - 1, currentPage, currentPage + 1].filter(p => p >= 1);
-        
-        setPageCache(prev => {
-            const newCache: Record<number, LocalGenItem[]> = {};
-            
-            // 保留有效范围内的已缓存数据
-            validPages.forEach(p => {
-                if (prev[p]) {
-                    newCache[p] = prev[p];
-                }
+        const inflight = inflightPagesRef.current[page];
+        if (inflight) {
+            return inflight;
+        }
+
+        const request = localHistory.getPage(page - 1, PAGE_SIZE)
+            .then(data => {
+                delete inflightPagesRef.current[page];
+                return data;
+            })
+            .catch(error => {
+                delete inflightPagesRef.current[page];
+                throw error;
             });
-            
-            // 添加当前页的新数据
-            newCache[currentPage] = data;
-            
-            console.log(`[缓存更新+清理] 当前页 ${currentPage}，有效范围: ${validPages.join(',')}，缓存:`, Object.keys(newCache).map(Number).sort());
-            return newCache;
-        });
+
+        inflightPagesRef.current[page] = request;
+        return request;
     };
 
-    // 仅添加缓存，不清理其他页面（在预加载中调用）
-    const addCache = (page: number, data: LocalGenItem[]) => {
-        setPageCache(prev => {
-            // 如果已经有缓存，不重复添加
-            if (prev[page]) {
-                return prev;
+    const preloadPage = async (page: number, totalPages: number) => {
+        if (page < 1 || page > totalPages) {
+            return;
+        }
+
+        try {
+            const data = await getPageData(page);
+
+            if (!pageCacheRef.current[page]) {
+                const nextCache = {
+                    ...pageCacheRef.current,
+                    [page]: data,
+                };
+                setCacheState(nextCache);
+                trimCacheAroundPage(currentPage, totalPages, nextCache);
             }
-            console.log(`[缓存添加] 页码 ${page}`);
-            return {
-                ...prev,
-                [page]: data
-            };
-        });
+
+            preloadImages(data);
+            console.log(`[预加载] 页码 ${page} 完成`);
+        } catch (e) {
+            console.warn('预加载页面失败:', e);
+        }
     };
 
     // 跳转到指定页
@@ -153,16 +162,22 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
             // 获取页面数据
             const data = await getPageData(targetPage);
             setItems(data);
+            preloadImages(data);
             
             // 更新缓存并清理
-            updateCacheAndClean(targetPage, data);
+            const nextCache = {
+                ...pageCacheRef.current,
+                [targetPage]: data,
+            };
+            setCacheState(nextCache);
+            trimCacheAroundPage(targetPage, calculatedTotalPages, nextCache);
             
             // 预加载相邻页面（当前页 +1 和 -1）
             if (targetPage > 1) {
-                loadPage(targetPage - 1);
+                void preloadPage(targetPage - 1, calculatedTotalPages);
             }
             if (targetPage < calculatedTotalPages) {
-                loadPage(targetPage + 1);
+                void preloadPage(targetPage + 1, calculatedTotalPages);
             }
             
         } catch (e) {
@@ -170,20 +185,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
             notify('加载失败，请重试', 'error');
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    // 加载指定页（用于预加载，不阻塞主流程）
-    const loadPage = async (page: number) => {
-        // 只检查缓存是否存在，不检查 isLoading（预加载不应被主加载阻塞）
-        if (pageCache[page]) return;
-        
-        try {
-            const data = await localHistory.getPage(page - 1, PAGE_SIZE);
-            addCache(page, data);
-            console.log(`[预加载] 页码 ${page} 完成`);
-        } catch (e) {
-            console.warn('预加载页面失败:', e);
         }
     };
 
@@ -381,7 +382,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
                                     <button
                                         key={page}
                                         onClick={() => goToPage(page)}
-                                        onMouseEnter={() => loadPage(page)}
                                         className={`px-2 py-1 text-xs rounded border transition-colors ${
                                             page === currentPage
                                                 ? 'bg-indigo-500 text-white border-indigo-500'
