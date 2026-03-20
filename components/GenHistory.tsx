@@ -42,7 +42,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
     const [pageCache, setPageCache] = useState<Record<number, LocalGenItem[]>>({});
     const pageCacheRef = useRef<Record<number, LocalGenItem[]>>({});
     const inflightPagesRef = useRef<Record<number, Promise<LocalGenItem[]>>>({});
-    const preloadedImagesRef = useRef<Set<string>>(new Set());
 
     // 清理相关状态
     const [showCleanMenu, setShowCleanMenu] = useState(false);
@@ -61,18 +60,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
     const setCacheState = (nextCache: Record<number, LocalGenItem[]>) => {
         pageCacheRef.current = nextCache;
         setPageCache(nextCache);
-    };
-
-    const preloadImages = (targetItems: LocalGenItem[]) => {
-        targetItems.forEach(item => {
-            if (!item.imageUrl || preloadedImagesRef.current.has(item.imageUrl)) {
-                return;
-            }
-
-            const image = new Image();
-            image.src = item.imageUrl;
-            preloadedImagesRef.current.add(item.imageUrl);
-        });
     };
 
     const trimCacheAroundPage = (centerPage: number, totalPages: number, extraPages: Record<number, LocalGenItem[]> = {}) => {
@@ -131,9 +118,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
                 setCacheState(nextCache);
                 trimCacheAroundPage(currentPage, totalPages, nextCache);
             }
-
-            preloadImages(data);
-            console.log(`[预加载] 页码 ${page} 完成`);
         } catch (e) {
             console.warn('预加载页面失败:', e);
         }
@@ -162,7 +146,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
             // 获取页面数据
             const data = await getPageData(targetPage);
             setItems(data);
-            preloadImages(data);
             
             // 更新缓存并清理
             const nextCache = {
