@@ -92,12 +92,11 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
         return data;
     };
 
-    // 更新缓存策略（合并为一次状态更新，避免覆盖）
-    const updateCache = (page: number, data: LocalGenItem[]) => {
+    // 更新缓存并清理过远的缓存（仅在 goToPage 中调用，基于当前显示页清理）
+    const updateCacheAndClean = (currentPage: number, data: LocalGenItem[]) => {
         // 定义需要保留的页码范围（当前页 ± 1 页）
-        const validPages = [page - 1, page, page + 1].filter(p => p >= 1);
+        const validPages = [currentPage - 1, currentPage, currentPage + 1].filter(p => p >= 1);
         
-        // 一次性更新缓存：添加新数据 + 清理旧数据
         setPageCache(prev => {
             const newCache: Record<number, LocalGenItem[]> = {};
             
@@ -109,10 +108,25 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
             });
             
             // 添加当前页的新数据
-            newCache[page] = data;
+            newCache[currentPage] = data;
             
-            console.log(`[缓存更新] 页码 ${page}，缓存范围:`, Object.keys(newCache).map(Number).sort());
+            console.log(`[缓存更新+清理] 当前页 ${currentPage}，有效范围: ${validPages.join(',')}，缓存:`, Object.keys(newCache).map(Number).sort());
             return newCache;
+        });
+    };
+
+    // 仅添加缓存，不清理其他页面（在预加载中调用）
+    const addCache = (page: number, data: LocalGenItem[]) => {
+        setPageCache(prev => {
+            // 如果已经有缓存，不重复添加
+            if (prev[page]) {
+                return prev;
+            }
+            console.log(`[缓存添加] 页码 ${page}`);
+            return {
+                ...prev,
+                [page]: data
+            };
         });
     };
 
@@ -140,8 +154,8 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
             const data = await getPageData(targetPage);
             setItems(data);
             
-            // 更新缓存
-            updateCache(targetPage, data);
+            // 更新缓存并清理
+            updateCacheAndClean(targetPage, data);
             
             // 预加载相邻页面（当前页 +1 和 -1）
             if (targetPage > 1) {
@@ -166,7 +180,7 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
         
         try {
             const data = await localHistory.getPage(page - 1, PAGE_SIZE);
-            updateCache(page, data);
+            addCache(page, data);
             console.log(`[预加载] 页码 ${page} 完成`);
         } catch (e) {
             console.warn('预加载页面失败:', e);
