@@ -242,7 +242,9 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
                 await localHistory.keepOnly(cleanCount);
             }
             setShowCleanModal(false);
-            goToPage(1); // 重新加载第一页
+            // 清空缓存，强制刷新页面数据和总数
+            setCacheState({});
+            await goToPage(1, true); // 强制重新加载第一页，刷新总数
             notify('清理完成');
         } catch (e: any) {
             notify('清理失败: ' + e.message, 'error');
@@ -332,13 +334,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
                 {/* 分页控件 */}
                 {totalCount > 0 && (
                     <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg border border-gray-200 dark:border-gray-700">
-                        {/* 页码信息 */}
-                        <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-300">
-                            <span>第 {currentPage} 页 / 共 {totalPages} 页</span>
-                            <span className="text-gray-400 dark:text-gray-500">|</span>
-                            <span>显示 {Math.min((currentPage - 1) * PAGE_SIZE + 1, totalCount)} - {Math.min(currentPage * PAGE_SIZE, totalCount)} 张</span>
-                        </div>
-
                         {/* 分页按钮 */}
                         <div className="flex items-center gap-2">
                             {/* 首页 */}
