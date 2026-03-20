@@ -114,21 +114,22 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
     };
 
     // 跳转到指定页
-    const goToPage = async (page: number) => {
+    const goToPage = async (page: number, force: boolean = false) => {
         if (isLoading) return;
         
         // 计算总页数
         const count = await localHistory.getCount();
-        const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
+        const calculatedTotalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
         
         // 边界检查
-        const targetPage = Math.max(1, Math.min(page, totalPages));
+        const targetPage = Math.max(1, Math.min(page, calculatedTotalPages));
         
-        if (targetPage === currentPage) return;
+        // 如果不是强制刷新，且目标页与当前页相同，则跳过
+        if (!force && targetPage === currentPage && items.length > 0) return;
         
         setIsLoading(true);
         setCurrentPage(targetPage);
-        setTotalPages(totalPages);
+        setTotalPages(calculatedTotalPages);
         setTotalCount(count);
         
         try {
