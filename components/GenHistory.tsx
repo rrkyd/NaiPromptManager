@@ -143,6 +143,14 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
             // 更新缓存
             updateCache(targetPage, data);
             
+            // 预加载相邻页面（当前页 +1 和 -1）
+            if (targetPage > 1) {
+                loadPage(targetPage - 1);
+            }
+            if (targetPage < calculatedTotalPages) {
+                loadPage(targetPage + 1);
+            }
+            
         } catch (e) {
             console.error('加载页面失败:', e);
             notify('加载失败，请重试', 'error');
@@ -151,13 +159,15 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
         }
     };
 
-    // 加载指定页（用于预加载）
+    // 加载指定页（用于预加载，不阻塞主流程）
     const loadPage = async (page: number) => {
-        if (pageCache[page] || isLoading) return;
+        // 只检查缓存是否存在，不检查 isLoading（预加载不应被主加载阻塞）
+        if (pageCache[page]) return;
         
         try {
-            const data = await getPageData(page);
+            const data = await localHistory.getPage(page - 1, PAGE_SIZE);
             updateCache(page, data);
+            console.log(`[预加载] 页码 ${page} 完成`);
         } catch (e) {
             console.warn('预加载页面失败:', e);
         }
