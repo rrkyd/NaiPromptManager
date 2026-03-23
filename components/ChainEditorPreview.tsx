@@ -54,7 +54,9 @@ export const ChainEditorPreview: React.FC<ChainEditorPreviewProps> = ({
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-            URL.revokeObjectURL(url);
+            // 延迟释放 URL，给浏览器足够时间处理下载请求
+            // 某些浏览器（如移动端 Alook）处理 click 事件较慢，立即释放会导致下载失败
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (error) {
             console.error('下载失败:', error);
             // 可选：这里可以添加 notify 提示用户下载失败
