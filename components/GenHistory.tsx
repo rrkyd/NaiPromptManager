@@ -271,9 +271,6 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify }) =
             notify('发布成功！已加入灵感图库');
             setIsPublishing(false);
             setPublishTitle('');
-            notify('发布成功！已加入灵感图库');
-            setIsPublishing(false);
-            setPublishTitle('');
             setLightbox(null); // Close lightbox
             setShowSuccessModal(true); // Show Success Modal
         } catch (e: any) {
