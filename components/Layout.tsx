@@ -167,7 +167,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentVie
                   {currentUser.username}
                 </span>
                 {currentUser.role === 'vip' && (
-                  <span className="vip-crown ml-1" title="VIP">👑</span>
+                  <span className="vip-label">VIP</span>
                 )}
               </div>
               {onLogout && (

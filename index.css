@@ -52,8 +52,24 @@
   width: 18px;
   height: 18px;
   font-size: 10px;
-  background: linear-gradient(135deg, #ffd700, #ff8c00);
+  background: linear-gradient(135deg, #1a1a2e, #16213e);
   border-radius: 4px;
   margin-left: 4px;
   vertical-align: middle;
+  border: 1px solid rgba(255, 215, 0, 0.5);
+}
+
+/* VIP 文字标签 */
+.vip-label {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: bold;
+  background: linear-gradient(135deg, #ffd700, #ff8c00);
+  color: #1a1a2e;
+  border-radius: 4px;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
