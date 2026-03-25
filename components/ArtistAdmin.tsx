@@ -19,7 +19,11 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
     isDark, toggleTheme, onLogout 
 }) => {
   const isAdmin = currentUser.role === 'admin';
-  const [activeTab, setActiveTab] = useState<'artist' | 'users' | 'profile' | 'stats'>(isAdmin ? 'artist' : 'profile');
+  const isVip = currentUser.role === 'vip';
+  const canManageArtists = isAdmin || isVip;
+  const [activeTab, setActiveTab] = useState<'artist' | 'users' | 'profile' | 'stats'>(
+    isAdmin ? 'artist' : (isVip ? 'artist' : 'profile')
+  );
   
   // Artist State (Managed via props now, filtered here if needed)
   const artists = artistsData || [];
@@ -58,14 +62,14 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
   const [clearingLogs, setClearingLogs] = useState(false);
 
   // Storage calculation helpers
-  const MAX_STORAGE = 300 * 1024 * 1024;
+  const getMaxStorage = () => currentUser?.maxStorage || 300 * 1024 * 1024;
   const formatBytes = (bytes?: number) => {
       if (!bytes) return '0 MB';
       return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
   const getUsagePercentage = () => {
       if (!currentUser || !currentUser.storageUsage) return 0;
-      return Math.min(100, (currentUser.storageUsage / MAX_STORAGE) * 100);
+      return Math.min(100, (currentUser.storageUsage / getMaxStorage()) * 100);
   };
 
   const handleRefresh = async () => {
@@ -322,9 +326,9 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
       <div className="max-w-6xl mx-auto">
         <div className="flex justify-between items-center mb-6">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">系统管理</h1>
-            {isAdmin && activeTab !== 'profile' && (
-                <button 
-                    onClick={handleRefresh} 
+            {canManageArtists && activeTab !== 'profile' && (
+                <button
+                    onClick={handleRefresh}
                     className={`p-2 rounded-lg bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors`}
                     title="刷新列表"
                 >
@@ -334,9 +338,13 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
         </div>
 
         <div className="flex space-x-4 mb-8 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
+            {/* 画师管理：admin和vip可见 */}
+            {(isAdmin || isVip) && (
+                <button onClick={() => setActiveTab('artist')} className={`pb-3 px-2 border-b-2 whitespace-nowrap ${activeTab === 'artist' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500'}`}>画师管理</button>
+            )}
+            {/* 用户管理、使用统计：仅admin可见 */}
             {isAdmin && (
                 <>
-                    <button onClick={() => setActiveTab('artist')} className={`pb-3 px-2 border-b-2 whitespace-nowrap ${activeTab === 'artist' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500'}`}>画师管理</button>
                     <button onClick={() => setActiveTab('users')} className={`pb-3 px-2 border-b-2 whitespace-nowrap ${activeTab === 'users' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500'}`}>用户管理</button>
                     <button onClick={() => setActiveTab('stats')} className={`pb-3 px-2 border-b-2 whitespace-nowrap ${activeTab === 'stats' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500'}`}>使用统计</button>
                 </>
@@ -345,7 +353,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
         </div>
 
         {/* --- ARTIST TAB --- */}
-        {activeTab === 'artist' && isAdmin && (
+        {activeTab === 'artist' && canManageArtists && (
             <>
                 {/* Import Block */}
                 <div className="mb-6 bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-xl border border-indigo-100 dark:border-indigo-800">
@@ -471,9 +479,35 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                                 const usagePercent = u.maxStorage ? Math.min(100, ((u.storageUsage || 0) / u.maxStorage) * 100) : 0;
                                 const isAdminUser = u.role === 'admin';
                                 return (
-                                <tr key={u.id} className="border-b dark:border-gray-700 last:border-0 dark:text-white">
-                                    <td className="p-4">{u.username}</td>
-                                    <td className="p-4"><span className={`px-2 py-1 rounded text-xs ${u.role === 'admin' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{u.role}</span></td>
+                                <tr key={u.id} className={`border-b dark:border-gray-700 last:border-0 dark:text-white ${u.role === 'vip' ? 'bg-yellow-50/30 dark:bg-yellow-900/10' : ''}`}>
+                                    <td className="p-4">
+                                        <span className={u.role === 'vip' ? 'vip-username font-medium' : ''}>{u.username}</span>
+                                        {u.role === 'vip' && <span className="vip-crown ml-1" title="VIP">👑</span>}
+                                    </td>
+                                    <td className="p-4">
+                                        <select
+                                            value={u.role}
+                                            onChange={async (e) => {
+                                                const newRole = e.target.value;
+                                                try {
+                                                    await db.updateUserRole(u.id, newRole);
+                                                    await onRefreshUsers();
+                                                } catch (err) {
+                                                    alert('角色更新失败');
+                                                }
+                                            }}
+                                            className={`px-2 py-1 rounded text-xs border-0 cursor-pointer ${
+                                                u.role === 'admin' ? 'bg-red-100 text-red-600' :
+                                                u.role === 'vip' ? 'bg-yellow-100 text-yellow-700' :
+                                                'bg-green-100 text-green-600'
+                                            }`}
+                                            disabled={u.id === currentUser.id}
+                                        >
+                                            <option value="user">普通用户</option>
+                                            <option value="vip">VIP</option>
+                                            <option value="admin">管理员</option>
+                                        </select>
+                                    </td>
                                     <td className="p-4 text-sm text-gray-500">{formatDate(u.createdAt)}</td>
                                     <td className="p-4 text-sm text-gray-500">{formatDateTime(u.lastLogin)}</td>
                                     <td className="p-4">
