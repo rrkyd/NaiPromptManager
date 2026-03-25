@@ -130,7 +130,9 @@ const INIT_SQL = `
   CREATE TABLE IF NOT EXISTS artists (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    image_url TEXT
+    image_url TEXT,
+    preview_url TEXT,
+    benchmarks TEXT
   );
   CREATE TABLE IF NOT EXISTS inspirations (
     id TEXT PRIMARY KEY,
@@ -260,6 +262,63 @@ async function processImageUpload(
     }
 
     return `/api/assets/${filename}`;
+}
+
+// Helper: Fetch External Image URL and Upload to R2
+async function fetchAndUploadImage(
+    env: Env,
+    imageUrl: string,
+    folder: string,
+    id: string,
+    user?: { id: string, role: string, storage_usage?: number, max_storage?: number }
+): Promise<string> {
+    if (!imageUrl.startsWith('http')) return imageUrl;
+    
+    if (!env.BUCKET) {
+        throw new Error("R2 Bucket not configured");
+    }
+
+    try {
+        // Fetch the image from external URL
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+        }
+
+        // Get the image data as ArrayBuffer
+        const arrayBuffer = await response.arrayBuffer();
+        const fileSize = arrayBuffer.byteLength;
+
+        // Extract file extension from URL or Content-Type
+        const contentType = response.headers.get('Content-Type') || 'image/jpeg';
+        const ext = contentType.split('/')[1] || 'jpg';
+        
+        // Generate filename
+        const urlPathname = new URL(imageUrl).pathname;
+        const originalFilename = urlPathname.split('/').pop() || `${id}_${Date.now()}`;
+        const filename = `${folder}/${id}_${originalFilename}`;
+
+        if (user && user.role !== 'admin') {
+            const currentUsage = user.storage_usage || 0;
+            const maxStorage = user.max_storage || 314572800; // 默认 300MB
+            if (currentUsage + fileSize > maxStorage) {
+                throw new Error(`Storage quota exceeded (limit: ${Math.round(maxStorage / 1024 / 1024)}MB).`);
+            }
+        }
+
+        await env.BUCKET.put(filename, arrayBuffer, {
+            httpMetadata: { contentType }
+        });
+        
+        if (user && env.DB) {
+            await env.DB.prepare('UPDATE users SET storage_usage = COALESCE(storage_usage, 0) + ? WHERE id = ?')
+                .bind(fileSize, user.id).run();
+        }
+
+        return `/api/assets/${filename}`;
+    } catch (error: any) {
+        throw new Error(`Failed to fetch and store external image: ${error.message}`);
+    }
 }
 
 export default {
@@ -832,6 +891,7 @@ export default {
         const existing = await db.prepare('SELECT benchmarks, preview_url, image_url FROM artists WHERE id = ?').bind(id).first<{benchmarks: string, preview_url: string, image_url: string}>();
         const oldBenchmarks = existing && existing.benchmarks ? JSON.parse(existing.benchmarks) : [];
 
+        // Process image URL - handle both Base64 and external URL
         let imageUrl = body.imageUrl;
         if (imageUrl && imageUrl.startsWith('data:')) {
             imageUrl = await processImageUpload(env, imageUrl, 'artists', id);
@@ -839,8 +899,16 @@ export default {
             if (existing && existing.image_url && existing.image_url !== imageUrl) {
                 await deleteR2File(env, existing.image_url);
             }
+        } else if (imageUrl && imageUrl.startsWith('http')) {
+            // Fetch external image URL and store in R2
+            imageUrl = await fetchAndUploadImage(env, imageUrl, 'artists', id, currentUser);
+            // Delete old avatar if changed
+            if (existing && existing.image_url && existing.image_url !== imageUrl) {
+                await deleteR2File(env, existing.image_url);
+            }
         }
 
+        // Process benchmarks - handle both Base64 and external URLs
         let benchmarks = body.benchmarks || [];
         if (Array.isArray(benchmarks)) {
             for (let i = 0; i < benchmarks.length; i++) {
@@ -854,11 +922,25 @@ export default {
                     if (oldUrl && oldUrl !== newUrl) {
                         await deleteR2File(env, oldUrl);
                     }
+                } else if (benchmarks[i] && benchmarks[i].startsWith('http')) {
+                    // Fetch external image URL and store in R2
+                    const newUrl = await fetchAndUploadImage(env, benchmarks[i], `artists/benchmarks_${i}`, id, currentUser);
+                    benchmarks[i] = newUrl;
+                    
+                    // Check and delete old file at this index
+                    const oldUrl = oldBenchmarks[i];
+                    if (oldUrl && oldUrl !== newUrl) {
+                        await deleteR2File(env, oldUrl);
+                    }
                 }
             }
         }
         
-        await db.prepare(`INSERT INTO artists (id, name, image_url, benchmarks, preview_url) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, image_url = excluded.image_url, benchmarks = excluded.benchmarks`).bind(id, body.name, imageUrl, JSON.stringify(benchmarks), body.previewUrl).run();
+        // Handle undefined values - convert to null or default
+        const previewUrl = body.previewUrl ?? null;
+        const benchmarksJson = JSON.stringify(benchmarks || []);
+        
+        await db.prepare(`INSERT INTO artists (id, name, image_url, benchmarks, preview_url) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, image_url = excluded.image_url, benchmarks = excluded.benchmarks, preview_url = excluded.preview_url`).bind(id, body.name, imageUrl, benchmarksJson, previewUrl).run();
         return json({ success: true, benchmarks });
       }
       if (path.startsWith('/api/artists/') && method === 'DELETE') {

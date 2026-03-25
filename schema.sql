@@ -44,7 +44,9 @@ CREATE TABLE chains (
 CREATE TABLE artists (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  image_url TEXT
+  image_url TEXT,
+  preview_url TEXT,
+  benchmarks TEXT
 );
 
 CREATE TABLE inspirations (
