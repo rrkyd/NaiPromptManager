@@ -1,6 +1,6 @@
 
 name = "nai-prompt-manager"
-compatibility_date = "2024-04-01"
+compatibility_date = "2026-04-11"
 pages_build_output_dir = "dist"
 
 # [D1 Database Configuration]
