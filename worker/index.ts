@@ -878,6 +878,11 @@ export default {
         return json({ success: true });
       }
 
+      // 画师接口依赖 artists.tags 等列；initDB 仅在登录等路径触发，已登录老会话可能从未迁移导致添加失败
+      if (path === '/api/artists' || path.startsWith('/api/artists/')) {
+        await initDB();
+      }
+
       // Artists (Updated with Deletion Logic)
       if (path === '/api/artists' && method === 'GET') {
          const res = await db.prepare('SELECT * FROM artists ORDER BY name ASC').all();

@@ -88,28 +88,34 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
   const handleArtistSave = async () => {
     if (!artistName.trim() || !artistImg.trim()) return;
     setIsLoading(true);
-    const id = editingId || crypto.randomUUID();
-    
-    // Find existing artist to preserve benchmarks if editing
-    const existing = artists.find(a => a.id === id);
-    const tags = artistTags.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-    const payload: Artist = {
-        id,
-        name: artistName.trim(),
-        imageUrl: artistImg,
-        previewUrl: existing?.previewUrl,
-        benchmarks: existing?.benchmarks,
-        tags
-    };
+    try {
+      const id = editingId || crypto.randomUUID();
 
-    await db.saveArtist(payload);
-    
-    setArtistName(''); 
-    setArtistImg(''); 
-    setArtistTags('');
-    setEditingId(null);
-    await onRefreshArtists();
-    setIsLoading(false);
+      // Find existing artist to preserve benchmarks if editing
+      const existing = artists.find(a => a.id === id);
+      const tags = artistTags.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+      const payload: Artist = {
+          id,
+          name: artistName.trim(),
+          imageUrl: artistImg,
+          previewUrl: existing?.previewUrl,
+          benchmarks: existing?.benchmarks,
+          tags
+      };
+
+      await db.saveArtist(payload);
+
+      setArtistName('');
+      setArtistImg('');
+      setArtistTags('');
+      setEditingId(null);
+      await onRefreshArtists();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`保存失败：${msg}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleEditArtist = (artist: Artist) => {
