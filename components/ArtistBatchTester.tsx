@@ -27,6 +27,51 @@ const DEFAULT_PARAMS: NAIParams = {
 
 const MODES = ['Equal', 'Fixed Some', 'Full Random', 'Iterate', 'Single'] as const;
 
+const BATCH_PREFS_KEY = 'nai_batch_tester_prefs_v1';
+
+type BatchTesterPersisted = {
+  artistText: string;
+  selectedArtists: string[];
+  basePositive: string;
+  negativePrompt: string;
+  nonArtistBlock: string;
+  mode: string;
+  fixedStrengthsText: string;
+  randMin: number;
+  randMax: number;
+  iterMin: number;
+  iterMax: number;
+  iterStep: number;
+  iterBase: number;
+  batchCount: number;
+  imagesPerArtist: number;
+  singleStrength: number;
+  cooldownMinSec: number;
+  cooldownMaxSec: number;
+  dedupeGuard: boolean;
+  batchParams: NAIParams;
+};
+
+function readBatchPrefs(): Partial<BatchTesterPersisted> | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(BATCH_PREFS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<BatchTesterPersisted>;
+    return p && typeof p === 'object' ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBatchPrefs(p: BatchTesterPersisted): void {
+  try {
+    localStorage.setItem(BATCH_PREFS_KEY, JSON.stringify(p));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -91,6 +136,12 @@ export const ArtistBatchTester: React.FC<ArtistBatchTesterProps> = ({
   const [publishTitle, setPublishTitle] = useState('');
   const [isPublishing, setIsPublishing] = useState(false);
 
+  const [prefsHydrated, setPrefsHydrated] = useState(false);
+  const [lightbox, setLightbox] = useState<{
+    imageUrl: string;
+    prompt: string;
+  } | null>(null);
+
   const pool = useMemo(() => parseArtistInput(artistText), [artistText]);
 
   useEffect(() => {
@@ -98,11 +149,113 @@ export const ArtistBatchTester: React.FC<ArtistBatchTesterProps> = ({
     if (saved) setApiKey(saved);
   }, []);
 
+  /** 从 localStorage 恢复批量页设置（不含 API Key、不含队列） */
+  useEffect(() => {
+    const p = readBatchPrefs();
+    if (p) {
+      if (typeof p.artistText === 'string') setArtistText(p.artistText);
+      if (typeof p.basePositive === 'string') setBasePositive(p.basePositive);
+      if (typeof p.negativePrompt === 'string') setNegativePrompt(p.negativePrompt);
+      if (typeof p.nonArtistBlock === 'string') setNonArtistBlock(p.nonArtistBlock);
+      if (typeof p.mode === 'string') setMode(p.mode);
+      if (typeof p.fixedStrengthsText === 'string')
+        setFixedStrengthsText(p.fixedStrengthsText);
+      if (typeof p.randMin === 'number') setRandMin(p.randMin);
+      if (typeof p.randMax === 'number') setRandMax(p.randMax);
+      if (typeof p.iterMin === 'number') setIterMin(p.iterMin);
+      if (typeof p.iterMax === 'number') setIterMax(p.iterMax);
+      if (typeof p.iterStep === 'number') setIterStep(p.iterStep);
+      if (typeof p.iterBase === 'number') setIterBase(p.iterBase);
+      if (typeof p.batchCount === 'number') setBatchCount(p.batchCount);
+      if (typeof p.imagesPerArtist === 'number')
+        setImagesPerArtist(p.imagesPerArtist);
+      if (typeof p.singleStrength === 'number')
+        setSingleStrength(p.singleStrength);
+      if (typeof p.cooldownMinSec === 'number')
+        setCooldownMinSec(p.cooldownMinSec);
+      if (typeof p.cooldownMaxSec === 'number')
+        setCooldownMaxSec(p.cooldownMaxSec);
+      if (typeof p.dedupeGuard === 'boolean') setDedupeGuard(p.dedupeGuard);
+      if (p.batchParams && typeof p.batchParams === 'object') {
+        setBatchParams({ ...DEFAULT_PARAMS, ...p.batchParams });
+      }
+      if (Array.isArray(p.selectedArtists)) {
+        const text = typeof p.artistText === 'string' ? p.artistText : '';
+        const pl = parseArtistInput(text);
+        setSelectedArtists(
+          p.selectedArtists.filter((n) => pl.some((x) => x === n))
+        );
+      }
+    }
+    setPrefsHydrated(true);
+  }, []);
+
   useEffect(() => {
     setSelectedArtists((prev) =>
       prev.filter((n) => pool.some((p) => p === n))
     );
   }, [pool]);
+
+  /** 自动保存当前设置（防抖） */
+  useEffect(() => {
+    if (!prefsHydrated) return;
+    const t = window.setTimeout(() => {
+      writeBatchPrefs({
+        artistText,
+        selectedArtists,
+        basePositive,
+        negativePrompt,
+        nonArtistBlock,
+        mode,
+        fixedStrengthsText,
+        randMin,
+        randMax,
+        iterMin,
+        iterMax,
+        iterStep,
+        iterBase,
+        batchCount,
+        imagesPerArtist,
+        singleStrength,
+        cooldownMinSec,
+        cooldownMaxSec,
+        dedupeGuard,
+        batchParams,
+      });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    prefsHydrated,
+    artistText,
+    selectedArtists,
+    basePositive,
+    negativePrompt,
+    nonArtistBlock,
+    mode,
+    fixedStrengthsText,
+    randMin,
+    randMax,
+    iterMin,
+    iterMax,
+    iterStep,
+    iterBase,
+    batchCount,
+    imagesPerArtist,
+    singleStrength,
+    cooldownMinSec,
+    cooldownMaxSec,
+    dedupeGuard,
+    batchParams,
+  ]);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightbox(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox]);
 
   const handleApiKeyChange = (v: string) => {
     setApiKey(v);
@@ -293,7 +446,7 @@ export const ArtistBatchTester: React.FC<ArtistBatchTesterProps> = ({
       <header className="p-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 flex-shrink-0">
         <h1 className="text-xl font-bold text-gray-900 dark:text-white">批量测试</h1>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-          多画师强度策略串行生图，结果写入本地历史并可发布灵感
+          多画师强度策略串行生图，结果写入本地历史并可发布灵感；表单与参数会自动记住（仅本机）
         </p>
       </header>
 
@@ -605,11 +758,23 @@ export const ArtistBatchTester: React.FC<ArtistBatchTesterProps> = ({
                     </td>
                     <td className="p-2 align-top">
                       {j.imageUrl ? (
-                        <img
-                          src={j.imageUrl}
-                          alt=""
-                          className="w-16 h-16 object-cover rounded"
-                        />
+                        <button
+                          type="button"
+                          title="点击查看大图"
+                          onClick={() =>
+                            setLightbox({
+                              imageUrl: j.imageUrl!,
+                              prompt: j.fullPrompt,
+                            })
+                          }
+                          className="block rounded overflow-hidden ring-1 ring-gray-200 dark:ring-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <img
+                            src={j.imageUrl}
+                            alt="预览"
+                            className="w-16 h-16 object-cover hover:opacity-90 transition-opacity"
+                          />
+                        </button>
                       ) : (
                         '—'
                       )}
@@ -693,6 +858,41 @@ export const ArtistBatchTester: React.FC<ArtistBatchTesterProps> = ({
                 合并到池
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-black/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="大图预览"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 text-white/90 hover:text-white text-2xl leading-none px-2"
+            aria-label="关闭"
+            onClick={(e) => {
+              e.stopPropagation();
+              setLightbox(null);
+            }}
+          >
+            ✕
+          </button>
+          <div
+            className="max-w-full max-h-[85vh] flex flex-col items-center gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightbox.imageUrl}
+              alt="生成图"
+              className="max-w-full max-h-[75vh] w-auto h-auto object-contain rounded-lg shadow-2xl"
+            />
+            <p className="text-xs text-white/80 max-w-2xl max-h-24 overflow-y-auto text-center px-2">
+              {lightbox.prompt}
+            </p>
           </div>
         </div>
       )}
