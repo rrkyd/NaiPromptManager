@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { NAIParams } from '../types';
+import { CHAIN_RESOLUTION_PRESETS } from '../constants/naImageResolutions';
 
 interface ChainEditorParamsProps {
     params: NAIParams;
@@ -9,11 +10,7 @@ interface ChainEditorParamsProps {
     markChange: () => void;
 }
 
-const RESOLUTIONS = {
-    Portrait: { width: 832, height: 1216, label: "竖屏 (832x1216)" },
-    Landscape: { width: 1216, height: 832, label: "横屏 (1216x832)" },
-    Square: { width: 1024, height: 1024, label: "方形 (1024x1024)" },
-};
+const RESOLUTIONS = CHAIN_RESOLUTION_PRESETS;
 
 export const ChainEditorParams: React.FC<ChainEditorParamsProps> = ({ params, setParams, canEdit, markChange }) => {
 
@@ -31,6 +28,8 @@ export const ChainEditorParams: React.FC<ChainEditorParamsProps> = ({ params, se
         const h = params.height;
         if (w === 832 && h === 1216) return 'Portrait';
         if (w === 1216 && h === 832) return 'Landscape';
+        if (w === 512 && h === 768) return 'PortraitSm';
+        if (w === 768 && h === 512) return 'LandscapeSm';
         if (w === 1024 && h === 1024) return 'Square';
         return 'Custom';
     };

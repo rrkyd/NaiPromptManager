@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import { BENCHMARK_RESOLUTION_OPTIONS, resolutionSelectValue } from '../constants/naImageResolutions';
 
 // Re-define locally to ensure portability
 interface BenchmarkSlot {
@@ -14,6 +15,8 @@ interface BenchmarkConfig {
     steps: number;
     scale: number;
     interval?: number; // Added interval
+    width: number;
+    height: number;
 }
 
 interface ArtistLibraryConfigProps {
@@ -34,10 +37,13 @@ export const ArtistLibraryConfig: React.FC<ArtistLibraryConfigProps> = ({
     const [draftConfig, setDraftConfig] = useState<BenchmarkConfig>(initialConfig);
     const [slotToDelete, setSlotToDelete] = useState<number | null>(null);
 
-    // Reset draft when opening
+    // Reset draft when opening（补齐旧配置缺少的 width/height）
     useEffect(() => {
         if (show) {
-            setDraftConfig(JSON.parse(JSON.stringify(initialConfig)));
+            const copy = JSON.parse(JSON.stringify(initialConfig)) as BenchmarkConfig;
+            if (typeof copy.width !== 'number' || copy.width < 64) copy.width = 832;
+            if (typeof copy.height !== 'number' || copy.height < 64) copy.height = 1216;
+            setDraftConfig(copy);
         }
     }, [show, initialConfig]);
 
@@ -177,6 +183,34 @@ export const ArtistLibraryConfig: React.FC<ArtistLibraryConfigProps> = ({
                             value={draftConfig.negative}
                             onChange={e => setDraftConfig({...draftConfig, negative: e.target.value})}
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">实装生成分辨率</label>
+                        {(() => {
+                            const dw = typeof draftConfig.width === 'number' ? draftConfig.width : 832;
+                            const dh = typeof draftConfig.height === 'number' ? draftConfig.height : 1216;
+                            const inPresetList = BENCHMARK_RESOLUTION_OPTIONS.some(o => o.width === dw && o.height === dh);
+                            return (
+                        <select
+                            className="w-full p-2 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded text-sm dark:text-white"
+                            value={resolutionSelectValue(dw, dh)}
+                            onChange={(e) => {
+                                const [w, h] = e.target.value.split('x').map(Number);
+                                setDraftConfig({ ...draftConfig, width: w, height: h });
+                            }}
+                        >
+                            {!inPresetList && (
+                                <option value={resolutionSelectValue(dw, dh)}>{`${dw}×${dh}（当前）`}</option>
+                            )}
+                            {BENCHMARK_RESOLUTION_OPTIONS.map((o) => (
+                                <option key={resolutionSelectValue(o.width, o.height)} value={resolutionSelectValue(o.width, o.height)}>
+                                    {o.label}
+                                </option>
+                            ))}
+                        </select>
+                            );
+                        })()}
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">

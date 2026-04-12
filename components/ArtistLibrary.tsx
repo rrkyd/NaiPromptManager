@@ -6,6 +6,7 @@ import { api } from '../services/api'; // Import api for updating
 import { db } from '../services/dbService'; // Import DB to fetch config
 import { ArtistLibraryConfig } from './ArtistLibraryConfig';
 import { ArtistLibraryCart } from './ArtistLibraryCart';
+import { BENCHMARK_RESOLUTION_OPTIONS, resolutionSelectValue } from '../constants/naImageResolutions';
 
 interface CartItem {
     name: string;
@@ -120,6 +121,9 @@ interface BenchmarkConfig {
     steps: number;
     scale: number;
     interval?: number; // Added interval
+    /** 实装生成图分辨率 */
+    width: number;
+    height: number;
 }
 
 const DEFAULT_BENCHMARK_CONFIG: BenchmarkConfig = {
@@ -141,8 +145,21 @@ const DEFAULT_BENCHMARK_CONFIG: BenchmarkConfig = {
     seed: -1, // Random
     steps: 28,
     scale: 6,
-    interval: 3000 // Default 3s
+    interval: 3000, // Default 3s
+    width: 832,
+    height: 1216
 };
+
+function normalizeBenchmarkConfig(raw: Partial<BenchmarkConfig> | null | undefined): BenchmarkConfig {
+    const merged: BenchmarkConfig = {
+        ...DEFAULT_BENCHMARK_CONFIG,
+        ...raw,
+        slots: raw?.slots && raw.slots.length > 0 ? raw.slots : DEFAULT_BENCHMARK_CONFIG.slots,
+        width: typeof raw?.width === 'number' && raw.width >= 64 ? raw.width : DEFAULT_BENCHMARK_CONFIG.width,
+        height: typeof raw?.height === 'number' && raw.height >= 64 ? raw.height : DEFAULT_BENCHMARK_CONFIG.height,
+    };
+    return merged;
+}
 
 // Queue Item Interface
 interface GenTask {
@@ -236,7 +253,7 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
 
         // Load Config from Server (Public)
         db.getBenchmarkConfig().then(cfg => {
-            if (cfg) setConfig(cfg);
+            if (cfg) setConfig(normalizeBenchmarkConfig(cfg));
         }).catch(err => {
             console.error("Failed to load benchmark config from server", err);
             // Fallback to local storage if server fails (backward compat)
@@ -244,8 +261,7 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
             if (savedConfig) {
                 try {
                     const parsed = JSON.parse(savedConfig);
-                    if (!parsed.slots || parsed.slots.length === 0) parsed.slots = DEFAULT_BENCHMARK_CONFIG.slots;
-                    setConfig(parsed);
+                    setConfig(normalizeBenchmarkConfig(parsed));
                 } catch (e) { }
             }
         });
@@ -513,19 +529,20 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
             return;
         }
         // Apply Draft to Real Config & Save to Server
-        setConfig(newConfig);
+        const normalized = normalizeBenchmarkConfig(newConfig);
+        setConfig(normalized);
 
         try {
-            await db.saveBenchmarkConfig(newConfig);
+            await db.saveBenchmarkConfig(normalized);
             notify('配置已保存 (同步至云端)');
         } catch (e) {
             console.error(e);
             notify('保存失败，仅本地生效', 'error');
-            localStorage.setItem('nai_benchmark_config', JSON.stringify(newConfig)); // Fallback
+            localStorage.setItem('nai_benchmark_config', JSON.stringify(normalized)); // Fallback
         }
 
         // Safety: if active slot was deleted, reset to 0
-        if (activeSlot >= newConfig.slots.length) {
+        if (activeSlot >= normalized.slots.length) {
             setActiveSlot(0);
         }
 
@@ -576,8 +593,10 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
                 const seed = config.seed;
 
                 // Generate
+                const bw = config.width ?? DEFAULT_BENCHMARK_CONFIG.width;
+                const bh = config.height ?? DEFAULT_BENCHMARK_CONFIG.height;
                 const result = await generateImage(apiKey, prompt, negative, {
-                    width: 832, height: 1216, steps: config.steps, scale: config.scale, sampler: 'k_euler_ancestral', seed: seed,
+                    width: bw, height: bh, steps: config.steps, scale: config.scale, sampler: 'k_euler_ancestral', seed: seed,
                     qualityToggle: true, ucPreset: 0
                 });
 
@@ -941,6 +960,40 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
                                 ))}
                             </div>
                         )}
+
+                        {(layoutMode === 'list' || viewMode === 'benchmark') && (() => {
+                            const cw = config.width ?? DEFAULT_BENCHMARK_CONFIG.width;
+                            const ch = config.height ?? DEFAULT_BENCHMARK_CONFIG.height;
+                            const inPresetList = BENCHMARK_RESOLUTION_OPTIONS.some(o => o.width === cw && o.height === ch);
+                            return (
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                                <span className="text-[10px] text-gray-500 dark:text-gray-400 whitespace-nowrap hidden sm:inline">分辨率</span>
+                                <select
+                                    title="实装生成图分辨率"
+                                    className="text-xs rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 py-1 pl-1.5 pr-6 max-w-[148px] sm:max-w-none"
+                                    value={resolutionSelectValue(cw, ch)}
+                                    onChange={(e) => {
+                                        const [w, h] = e.target.value.split('x').map(Number);
+                                        setConfig((prev) => {
+                                            const next = normalizeBenchmarkConfig({ ...prev, width: w, height: h });
+                                            localStorage.setItem('nai_benchmark_config', JSON.stringify(next));
+                                            void db.saveBenchmarkConfig(next).catch(() => { /* VIP / 离线仅本地 */ });
+                                            return next;
+                                        });
+                                    }}
+                                >
+                                    {!inPresetList && (
+                                        <option value={resolutionSelectValue(cw, ch)}>{`${cw}×${ch}（当前）`}</option>
+                                    )}
+                                    {BENCHMARK_RESOLUTION_OPTIONS.map((o) => (
+                                        <option key={resolutionSelectValue(o.width, o.height)} value={resolutionSelectValue(o.width, o.height)}>
+                                            {o.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Settings Group */}
