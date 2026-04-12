@@ -35,6 +35,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
   
   const [artistName, setArtistName] = useState('');
   const [artistImg, setArtistImg] = useState('');
+  const [artistTags, setArtistTags] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   
@@ -91,18 +92,21 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
     
     // Find existing artist to preserve benchmarks if editing
     const existing = artists.find(a => a.id === id);
-    const payload = {
+    const tags = artistTags.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+    const payload: Artist = {
         id,
         name: artistName.trim(),
         imageUrl: artistImg,
         previewUrl: existing?.previewUrl,
-        benchmarks: existing?.benchmarks
+        benchmarks: existing?.benchmarks,
+        tags
     };
 
     await db.saveArtist(payload);
     
     setArtistName(''); 
     setArtistImg(''); 
+    setArtistTags('');
     setEditingId(null);
     await onRefreshArtists();
     setIsLoading(false);
@@ -112,12 +116,14 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
       setEditingId(artist.id);
       setArtistName(artist.name);
       setArtistImg(artist.imageUrl);
+      setArtistTags((artist.tags && artist.tags.length ? artist.tags : []).join(', '));
   };
 
   const handleCancelEdit = () => {
       setEditingId(null);
       setArtistName('');
       setArtistImg('');
+      setArtistTags('');
   };
 
   const handleArtistDelete = async (id: string) => {
@@ -396,6 +402,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                                 <label htmlFor="art-up" className="px-3 py-2 bg-gray-200 rounded cursor-pointer text-sm flex items-center hover:bg-gray-300 transition-colors whitespace-nowrap">上传</label>
                                 <input type="text" value={artistImg} onChange={e => setArtistImg(e.target.value)} className="flex-1 min-w-0 p-2 border rounded dark:bg-gray-900 dark:border-gray-600 dark:text-white" placeholder="图片 URL/Base64" />
                             </div>
+                            <input type="text" value={artistTags} onChange={e => setArtistTags(e.target.value)} className="w-full p-2 border rounded dark:bg-gray-900 dark:border-gray-600 dark:text-white md:col-span-2" placeholder="标签（逗号分隔，如：日系, 厚涂）" />
                         </div>
                         <div className="flex gap-2">
                             <button onClick={handleArtistSave} className="bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-500/30">{editingId ? '保存修改' : '添加'}</button>
@@ -407,9 +414,14 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pb-20">
                     {artists.map(a => (
                         <div key={a.id} className="bg-white dark:bg-gray-800 p-4 rounded shadow flex items-center justify-between group hover:shadow-md transition-shadow">
-                            <div className="flex items-center gap-2 overflow-hidden">
+                            <div className="flex items-center gap-2 overflow-hidden min-w-0">
                                 <img src={a.imageUrl} className="w-8 h-8 rounded object-cover flex-shrink-0" loading="lazy" />
-                                <span className="dark:text-white font-bold text-sm truncate">{a.name}</span>
+                                <div className="min-w-0">
+                                    <span className="dark:text-white font-bold text-sm truncate block">{a.name}</span>
+                                    {a.tags && a.tags.length > 0 && (
+                                        <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate block">{a.tags.join(' · ')}</span>
+                                    )}
+                                </div>
                             </div>
                             <div className="flex gap-2 text-xs flex-shrink-0 ml-2">
                                 <button onClick={() => handleEditArtist(a)} className="text-indigo-500 hover:text-indigo-700 font-medium">编辑</button>

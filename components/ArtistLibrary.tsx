@@ -30,6 +30,18 @@ const getGroupChar = (name: string) => {
 
 const ALPHABET = '#ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
+const LIBRARY_PREFS_KEY = 'nai_artist_library_prefs_v1';
+
+function normalizeTagKey(s: string): string {
+    return s.trim().toLowerCase();
+}
+
+function artistMatchesFilterTag(artist: Artist, filterTag: string): boolean {
+    if (!filterTag) return true;
+    const key = normalizeTagKey(filterTag);
+    return (artist.tags || []).some(t => normalizeTagKey(t) === key);
+}
+
 // Helper: Compress Base64 Image to JPEG
 const compressImage = (base64: string, quality: number = 0.8): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -147,12 +159,25 @@ interface LogEntry {
 
 export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleTheme, artistsData, onRefresh, notify, currentUser }) => {
     const [searchTerm, setSearchTerm] = useState('');
+    const [filterTag, setFilterTag] = useState(() => {
+        try {
+            const raw = localStorage.getItem(LIBRARY_PREFS_KEY);
+            if (!raw) return '';
+            const p = JSON.parse(raw);
+            return typeof p.filterTag === 'string' ? p.filterTag : '';
+        } catch {
+            return '';
+        }
+    });
     const [cart, setCart] = useState<CartItem[]>([]);
     const [favorites, setFavorites] = useState<Set<string>>(new Set());
     const [showFavOnly, setShowFavOnly] = useState(false);
     const [usePrefix, setUsePrefix] = useState(true);
     const [lightboxState, setLightboxState] = useState<{ artistIdx: number, slotIdx: number } | null>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const filterTagRef = useRef(filterTag);
+    filterTagRef.current = filterTag;
+    const scrollRestoredRef = useRef(false);
     const [isLoading, setIsLoading] = useState(false);
 
     // New State for features
@@ -322,14 +347,85 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
         notify('组合串已复制！');
     };
 
+    const allTags = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const a of artistsData || []) {
+            for (const t of a.tags || []) {
+                const d = t.trim();
+                if (!d) continue;
+                const k = normalizeTagKey(d);
+                if (!map.has(k)) map.set(k, d);
+            }
+        }
+        return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    }, [artistsData]);
+
     // MEMOIZED Filtered Artists to prevent stutter during layout changes
     const filteredArtists = useMemo(() => {
         return (artistsData || []).filter(a => {
             if (showFavOnly && !favorites.has(a.name)) return false;
+            if (!artistMatchesFilterTag(a, filterTag)) return false;
             if (searchTerm) return a.name.toLowerCase().includes(searchTerm.toLowerCase());
             return true;
         });
-    }, [artistsData, showFavOnly, favorites, searchTerm]);
+    }, [artistsData, showFavOnly, favorites, searchTerm, filterTag]);
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(LIBRARY_PREFS_KEY);
+            const prev = raw ? JSON.parse(raw) : {};
+            localStorage.setItem(LIBRARY_PREFS_KEY, JSON.stringify({ ...prev, filterTag }));
+        } catch { /* ignore */ }
+    }, [filterTag]);
+
+    useEffect(() => {
+        if (scrollRestoredRef.current || !(artistsData && artistsData.length > 0)) return;
+        let target = 0;
+        try {
+            const raw = localStorage.getItem(LIBRARY_PREFS_KEY);
+            if (raw) {
+                const p = JSON.parse(raw);
+                if (typeof p.scrollTop === 'number' && p.scrollTop > 0) target = p.scrollTop;
+            }
+        } catch { /* ignore */ }
+        if (target <= 0) {
+            scrollRestoredRef.current = true;
+            return;
+        }
+        const id = requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                const el = scrollContainerRef.current;
+                if (el) el.scrollTop = target;
+                scrollRestoredRef.current = true;
+            });
+        });
+        return () => cancelAnimationFrame(id);
+    }, [artistsData?.length]);
+
+    useEffect(() => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+        let timer: ReturnType<typeof setTimeout>;
+        const saveScroll = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                try {
+                    const raw = localStorage.getItem(LIBRARY_PREFS_KEY);
+                    const prev = raw ? JSON.parse(raw) : {};
+                    localStorage.setItem(LIBRARY_PREFS_KEY, JSON.stringify({
+                        ...prev,
+                        scrollTop: el.scrollTop,
+                        filterTag: filterTagRef.current
+                    }));
+                } catch { /* ignore */ }
+            }, 200);
+        };
+        el.addEventListener('scroll', saveScroll, { passive: true });
+        return () => {
+            clearTimeout(timer);
+            el.removeEventListener('scroll', saveScroll);
+        };
+    }, [artistsData?.length, layoutMode, viewMode, gridCols, listImgWidth]);
 
     // --- New Features Logic ---
 
@@ -501,7 +597,8 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
                     name: artist.name,
                     imageUrl: artist.imageUrl,
                     previewUrl: artist.previewUrl,
-                    benchmarks: currentBenchmarks
+                    benchmarks: currentBenchmarks,
+                    tags: artist.tags ?? []
                 });
 
                 // Refresh UI
@@ -773,6 +870,34 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
                     </div>
                 </div>
 
+                {allTags.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 gap-y-2 w-full">
+                        <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">标签</span>
+                        <button
+                            type="button"
+                            onClick={() => setFilterTag('')}
+                            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${filterTag === ''
+                                ? 'bg-indigo-100 dark:bg-indigo-900/50 border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-200'
+                                : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-indigo-300 dark:hover:border-indigo-600'}`}
+                        >
+                            全部
+                        </button>
+                        {allTags.map(t => (
+                            <button
+                                key={t}
+                                type="button"
+                                onClick={() => setFilterTag(prev => (normalizeTagKey(prev) === normalizeTagKey(t) ? '' : t))}
+                                className={`text-xs px-2.5 py-1 rounded-full border transition-colors max-w-[140px] truncate ${normalizeTagKey(filterTag) === normalizeTagKey(t)
+                                    ? 'bg-indigo-100 dark:bg-indigo-900/50 border-indigo-300 dark:border-indigo-700 text-indigo-800 dark:text-indigo-200'
+                                    : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-indigo-300 dark:hover:border-indigo-600'}`}
+                                title={t}
+                            >
+                                {t}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
                 <div className="flex justify-between items-center flex-wrap gap-2">
                     {/* View Toggle (Only show in Grid mode, or keep for general settings) */}
                     {layoutMode === 'grid' && (
@@ -1022,6 +1147,19 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
                                     </div>
                                     <div className="p-2 md:p-3 bg-white dark:bg-gray-800 text-center border-t border-gray-100 dark:border-gray-700">
                                         <div className={`text-xs md:text-sm font-bold truncate ${isSelected ? 'text-red-500' : 'text-gray-700 dark:text-gray-300'}`}>{artist.name}</div>
+                                        {artist.tags && artist.tags.length > 0 && (
+                                            <div className="flex flex-wrap justify-center gap-0.5 mt-1" onClick={e => e.stopPropagation()}>
+                                                {artist.tags.slice(0, 5).map((tag, ti) => (
+                                                    <span
+                                                        key={`${artist.id}-t-${ti}`}
+                                                        className="text-[9px] px-1 py-0 rounded bg-gray-100 dark:bg-gray-700/80 text-gray-600 dark:text-gray-400 max-w-full truncate"
+                                                        title={tag}
+                                                    >
+                                                        {tag}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )
@@ -1044,33 +1182,47 @@ export const ArtistLibrary: React.FC<ArtistLibraryProps> = ({ isDark, toggleThem
                                     className={`bg-white dark:bg-gray-800 rounded-xl border p-4 shadow-sm ${isSelected ? 'border-red-500 dark:border-red-500 ring-1 ring-red-500' : 'border-gray-200 dark:border-gray-700'}`}
                                     onClick={() => toggleCart(artist.name)}
                                 >
-                                    <div className="flex justify-between items-center mb-3">
-                                        <div className="flex items-center gap-3">
-                                            <h3
-                                                className={`font-bold text-lg md:text-xl cursor-pointer hover:underline ${isSelected ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    toggleCart(artist.name);
-                                                }}
-                                            >
-                                                {artist.name}
-                                            </h3>
-                                            <button onClick={(e) => toggleFav(artist.name, e)} className={`${isFav ? 'text-yellow-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
-                                                <svg className="w-5 h-5" fill={isFav ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.563.044.8.77.38 1.178l-4.244 4.134a.563.563 0 00-.153.476l1.24 5.376c.13.565-.487 1.01-.967.756L12 18.232l-4.894 3.08c-.48.254-1.097-.19-.967-.756l1.24-5.376a.563.563 0 00-.153-.476L2.985 10.575c-.42-.408-.183-1.134.38-1.178l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" /></svg>
-                                            </button>
-                                            <a href={`https://danbooru.donmai.us/posts?tags=${artist.name}`} target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-600 dark:text-blue-400">
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                                            </a>
+                                    <div className="mb-3">
+                                        <div className="flex justify-between items-center">
+                                            <div className="flex items-center gap-3">
+                                                <h3
+                                                    className={`font-bold text-lg md:text-xl cursor-pointer hover:underline ${isSelected ? 'text-red-500' : 'text-gray-900 dark:text-white'}`}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleCart(artist.name);
+                                                    }}
+                                                >
+                                                    {artist.name}
+                                                </h3>
+                                                <button onClick={(e) => toggleFav(artist.name, e)} className={`${isFav ? 'text-yellow-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
+                                                    <svg className="w-5 h-5" fill={isFav ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.563.044.8.77.38 1.178l-4.244 4.134a.563.563 0 00-.153.476l1.24 5.376c.13.565-.487 1.01-.967.756L12 18.232l-4.894 3.08c-.48.254-1.097-.19-.967-.756l1.24-5.376a.563.563 0 00-.153-.476L2.985 10.575c-.42-.408-.183-1.134.38-1.178l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" /></svg>
+                                                </button>
+                                                <a href={`https://danbooru.donmai.us/posts?tags=${artist.name}`} target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-600 dark:text-blue-400">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                                </a>
+                                            </div>
+                                            {isAdmin && apiKey && (
+                                                <button
+                                                    onClick={(e) => queueGeneration(artist, config.slots.map((_, i) => i), e)}
+                                                    className="text-xs bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1 rounded hover:bg-green-100 dark:hover:bg-green-900/50 flex items-center gap-1 border border-green-200 dark:border-green-800"
+                                                    title="生成所有实装"
+                                                >
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                    Generate All
+                                                </button>
+                                            )}
                                         </div>
-                                        {isAdmin && apiKey && (
-                                            <button
-                                                onClick={(e) => queueGeneration(artist, config.slots.map((_, i) => i), e)}
-                                                className="text-xs bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1 rounded hover:bg-green-100 dark:hover:bg-green-900/50 flex items-center gap-1 border border-green-200 dark:border-green-800"
-                                                title="生成所有实装"
-                                            >
-                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                                Generate All
-                                            </button>
+                                        {artist.tags && artist.tags.length > 0 && (
+                                            <div className="flex flex-wrap gap-1 mt-2" onClick={e => e.stopPropagation()}>
+                                                {artist.tags.map((tag, ti) => (
+                                                    <span
+                                                        key={`${artist.id}-lt-${ti}`}
+                                                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
+                                                    >
+                                                        {tag}
+                                                    </span>
+                                                ))}
+                                            </div>
                                         )}
                                     </div>
                                     <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar flex-nowrap items-stretch">

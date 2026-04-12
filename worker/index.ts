@@ -132,7 +132,8 @@ const INIT_SQL = `
     name TEXT NOT NULL,
     image_url TEXT,
     preview_url TEXT,
-    benchmarks TEXT
+    benchmarks TEXT,
+    tags TEXT DEFAULT '[]'
   );
   CREATE TABLE IF NOT EXISTS inspirations (
     id TEXT PRIMARY KEY,
@@ -369,6 +370,7 @@ export default {
       try { await db.prepare("ALTER TABLE chains ADD COLUMN variable_values TEXT DEFAULT '{}'").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE artists ADD COLUMN preview_url TEXT").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE artists ADD COLUMN benchmarks TEXT DEFAULT '[]'").run(); } catch (e) {}
+      try { await db.prepare("ALTER TABLE artists ADD COLUMN tags TEXT DEFAULT '[]'").run(); } catch (e) {}
       try { await db.prepare("ALTER TABLE chains ADD COLUMN type TEXT DEFAULT 'style'").run(); } catch (e) {}
 
       // 创建访问日志表
@@ -879,7 +881,16 @@ export default {
       // Artists (Updated with Deletion Logic)
       if (path === '/api/artists' && method === 'GET') {
          const res = await db.prepare('SELECT * FROM artists ORDER BY name ASC').all();
-         return json(res.results.map((a: any) => ({ id: a.id, name: a.name, imageUrl: a.image_url, previewUrl: a.preview_url, benchmarks: a.benchmarks ? JSON.parse(a.benchmarks) : [] })));
+         return json(res.results.map((a: any) => {
+           let tags: string[] = [];
+           if (a.tags) {
+             try {
+               const parsed = JSON.parse(a.tags);
+               if (Array.isArray(parsed)) tags = parsed.map((t: unknown) => String(t).trim()).filter(Boolean);
+             } catch {}
+           }
+           return { id: a.id, name: a.name, imageUrl: a.image_url, previewUrl: a.preview_url, benchmarks: a.benchmarks ? JSON.parse(a.benchmarks) : [], tags };
+         }));
       }
       if (path === '/api/artists' && method === 'POST') {
         // 使用统一的角色策略检查画师管理权限（admin + vip）
@@ -888,7 +899,7 @@ export default {
         const id = body.id || crypto.randomUUID();
         
         // Fetch existing artist to compare for deletions
-        const existing = await db.prepare('SELECT benchmarks, preview_url, image_url FROM artists WHERE id = ?').bind(id).first<{benchmarks: string, preview_url: string, image_url: string}>();
+        const existing = await db.prepare('SELECT benchmarks, preview_url, image_url, tags FROM artists WHERE id = ?').bind(id).first<{benchmarks: string, preview_url: string, image_url: string, tags: string}>();
         const oldBenchmarks = existing && existing.benchmarks ? JSON.parse(existing.benchmarks) : [];
 
         // Process image URL - handle both Base64 and external URL
@@ -940,8 +951,25 @@ export default {
         const previewUrl = body.previewUrl ?? null;
         const benchmarksJson = JSON.stringify(benchmarks || []);
         const sanitizedName = body.name ? body.name.trim() : '';
-        
-        await db.prepare(`INSERT INTO artists (id, name, image_url, benchmarks, preview_url) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, image_url = excluded.image_url, benchmarks = excluded.benchmarks, preview_url = excluded.preview_url`).bind(id, sanitizedName, imageUrl, benchmarksJson, previewUrl).run();
+
+        let tagsJson: string;
+        if (body.tags !== undefined && body.tags !== null) {
+          const arr = Array.isArray(body.tags)
+            ? body.tags.map((t: unknown) => String(t).trim()).filter((s: string) => s.length > 0)
+            : [];
+          tagsJson = JSON.stringify(arr);
+        } else {
+          let kept: string[] = [];
+          if (existing?.tags) {
+            try {
+              const parsed = JSON.parse(existing.tags);
+              if (Array.isArray(parsed)) kept = parsed.map((t: unknown) => String(t).trim()).filter(Boolean);
+            } catch {}
+          }
+          tagsJson = JSON.stringify(kept);
+        }
+
+        await db.prepare(`INSERT INTO artists (id, name, image_url, benchmarks, preview_url, tags) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, image_url = excluded.image_url, benchmarks = excluded.benchmarks, preview_url = excluded.preview_url, tags = excluded.tags`).bind(id, sanitizedName, imageUrl, benchmarksJson, previewUrl, tagsJson).run();
         return json({ success: true, benchmarks });
       }
       if (path.startsWith('/api/artists/') && method === 'DELETE') {

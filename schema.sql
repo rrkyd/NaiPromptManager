@@ -46,7 +46,8 @@ CREATE TABLE artists (
   name TEXT NOT NULL,
   image_url TEXT,
   preview_url TEXT,
-  benchmarks TEXT
+  benchmarks TEXT,
+  tags TEXT DEFAULT '[]'
 );
 
 CREATE TABLE inspirations (
