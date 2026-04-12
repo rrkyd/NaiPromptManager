@@ -12,12 +12,24 @@ interface GenHistoryProps {
     onNavigateToPlayground?: () => void;
 }
 
+function batchPublishDatePrefix(): string {
+    const d = new Date();
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify, onNavigateToPlayground }) => {
     const [items, setItems] = useState<LocalGenItem[]>([]);
     const [lightbox, setLightbox] = useState<LocalGenItem | null>(null);
     const [isPublishing, setIsPublishing] = useState(false);
     const [publishTitle, setPublishTitle] = useState('');
     const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [successPublishCount, setSuccessPublishCount] = useState(1);
+
+    /** 多选：按点击顺序保存 id，便于标题 batch 序号 */
+    const [multiSelectMode, setMultiSelectMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [showBatchConfirmModal, setShowBatchConfirmModal] = useState(false);
+    const [isBatchPublishing, setIsBatchPublishing] = useState(false);
 
     // 分页相关状态
     const [currentPage, setCurrentPage] = useState(1);
@@ -193,9 +205,75 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify, onN
         if (confirm('确定删除这张图片记录吗？(无法恢复)')) {
             await localHistory.delete(id);
             if (lightbox?.id === id) setLightbox(null);
+            setSelectedIds((prev) => prev.filter((x) => x !== id));
             // 清空缓存并强制刷新当前页
             setCacheState({});
             await goToPage(currentPage, true);
+        }
+    };
+
+    const toggleMultiSelectMode = () => {
+        setMultiSelectMode((m) => {
+            if (m) setSelectedIds([]);
+            return !m;
+        });
+    };
+
+    const toggleCardSelected = (id: string) => {
+        setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    };
+
+    const selectAllOnPage = () => {
+        setSelectedIds(items.map((i) => i.id));
+    };
+
+    const clearSelection = () => setSelectedIds([]);
+
+    const runBatchPublishToInspiration = async () => {
+        if (selectedIds.length === 0) return;
+        const datePrefix = batchPublishDatePrefix();
+        setIsBatchPublishing(true);
+        let ok = 0;
+        let fail = 0;
+        try {
+            for (let i = 0; i < selectedIds.length; i++) {
+                const id = selectedIds[i];
+                const item = await localHistory.getById(id);
+                if (!item) {
+                    fail++;
+                    continue;
+                }
+                const title = `${datePrefix}-${i + 1}`;
+                try {
+                    await db.saveInspiration({
+                        id: crypto.randomUUID(),
+                        title,
+                        imageUrl: item.imageUrl,
+                        prompt: item.prompt,
+                        userId: currentUser.id,
+                        username: currentUser.username,
+                        createdAt: Date.now(),
+                    });
+                    ok++;
+                } catch {
+                    fail++;
+                }
+            }
+            setShowBatchConfirmModal(false);
+            setSelectedIds([]);
+            setMultiSelectMode(false);
+            if (ok > 0) {
+                setSuccessPublishCount(ok);
+                setShowSuccessModal(true);
+                notify(`已发布 ${ok} 张到灵感图库${fail ? `，${fail} 张失败` : ''}`, 'success');
+            } else {
+                notify('全部发布失败，请检查网络或权限', 'error');
+            }
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            notify('批量发布失败: ' + msg, 'error');
+        } finally {
+            setIsBatchPublishing(false);
         }
     };
 
@@ -261,6 +339,7 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify, onN
             setIsPublishing(false);
             setPublishTitle('');
             setLightbox(null); // Close lightbox
+            setSuccessPublishCount(1);
             setShowSuccessModal(true); // Show Success Modal
         } catch (e: any) {
             notify('发布失败: ' + e.message, 'error');
@@ -276,8 +355,45 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify, onN
                         <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">本地生图历史</h1>
                         <p className="text-xs text-gray-500 dark:text-gray-400">仅存储在您的浏览器中</p>
                     </div>
-                    <div className="flex gap-2 md:gap-3 items-center">
+                    <div className="flex gap-2 md:gap-3 items-center flex-wrap justify-end">
                         <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center">共 {totalCount} 张</div>
+                        <button
+                            type="button"
+                            onClick={toggleMultiSelectMode}
+                            className={`px-3 py-1 md:px-4 md:py-2 rounded text-xs md:text-sm font-medium transition-colors ${
+                                multiSelectMode
+                                    ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600'
+                            }`}
+                        >
+                            {multiSelectMode ? '退出多选' : '多选模式'}
+                        </button>
+                        {multiSelectMode && selectedIds.length > 0 && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowBatchConfirmModal(true)}
+                                    disabled={isBatchPublishing}
+                                    className="px-3 py-1 md:px-4 md:py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs md:text-sm font-bold disabled:opacity-50"
+                                >
+                                    发布到灵感 ({selectedIds.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={selectAllOnPage}
+                                    className="px-2 py-1 md:px-3 md:py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-xs md:text-sm"
+                                >
+                                    全选本页
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={clearSelection}
+                                    className="px-2 py-1 md:px-3 md:py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-xs md:text-sm"
+                                >
+                                    清空选择
+                                </button>
+                            </>
+                        )}
                         <div className="relative">
                             <button 
                                 onClick={() => setShowCleanMenu(!showCleanMenu)} 
@@ -429,11 +545,33 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify, onN
                             {items.map(item => (
                                 <div
                                     key={item.id}
-                                    className="group relative aspect-square bg-gray-200 dark:bg-gray-800 rounded-lg overflow-hidden cursor-pointer border border-gray-200 dark:border-gray-700 hover:border-indigo-500 transition-colors"
-                                    onClick={() => setLightbox(item)}
+                                    className={`group relative aspect-square bg-gray-200 dark:bg-gray-800 rounded-lg overflow-hidden cursor-pointer border transition-colors ${
+                                        multiSelectMode && selectedIds.includes(item.id)
+                                            ? 'border-indigo-500 ring-2 ring-indigo-400 dark:ring-indigo-500'
+                                            : 'border-gray-200 dark:border-gray-700 hover:border-indigo-500'
+                                    }`}
+                                    onClick={() => {
+                                        if (multiSelectMode) toggleCardSelected(item.id);
+                                        else setLightbox(item);
+                                    }}
                                 >
                                     <img src={item.imageUrl} className="w-full h-full object-cover" loading="lazy" />
-                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+                                    {multiSelectMode && (
+                                        <div
+                                            className="absolute top-2 left-2 z-10 w-7 h-7 rounded-md border-2 border-white shadow flex items-center justify-center bg-black/40"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleCardSelected(item.id);
+                                            }}
+                                        >
+                                            {selectedIds.includes(item.id) ? (
+                                                <span className="text-white text-sm font-bold">✓</span>
+                                            ) : (
+                                                <span className="text-white/60 text-xs"> </span>
+                                            )}
+                                        </div>
+                                    )}
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />
                                     <div className="absolute top-2 right-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button onClick={(e) => handleDelete(item.id, e)} className="p-1.5 bg-red-500 text-white rounded-full shadow hover:bg-red-600">
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
@@ -609,6 +747,52 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify, onN
                 </div>
             )}
 
+            {/* 批量发布确认 */}
+            {showBatchConfirmModal && (
+                <div
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+                    onClick={() => {
+                        if (!isBatchPublishing) setShowBatchConfirmModal(false);
+                    }}
+                >
+                    <div
+                        className="bg-white dark:bg-gray-800 rounded-xl p-6 max-w-md w-full shadow-2xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">批量发布到灵感</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">
+                            将发布 <span className="font-bold text-indigo-600 dark:text-indigo-400">{selectedIds.length}</span>{' '}
+                            张图片。
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                            标题按选择顺序依次为：
+                            <span className="font-mono text-gray-700 dark:text-gray-200">
+                                {' '}
+                                {batchPublishDatePrefix()}-1 … {batchPublishDatePrefix()}-{selectedIds.length}
+                            </span>
+                        </p>
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowBatchConfirmModal(false)}
+                                disabled={isBatchPublishing}
+                                className="flex-1 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg font-bold"
+                            >
+                                取消
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void runBatchPublishToInspiration()}
+                                disabled={isBatchPublishing}
+                                className="flex-1 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold disabled:opacity-50"
+                            >
+                                {isBatchPublishing ? '发布中…' : '确认发布'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Success Modal */}
             {showSuccessModal && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -618,7 +802,9 @@ export const GenHistory: React.FC<GenHistoryProps> = ({ currentUser, notify, onN
                         </div>
                         <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">发布成功！</h3>
                         <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
-                            您的作品已添加到灵感图库，其他用户可以查看并引用您的 Prompt。
+                            {successPublishCount > 1
+                                ? `已成功将 ${successPublishCount} 张作品加入灵感图库，其他用户可以查看并引用 Prompt。`
+                                : '您的作品已添加到灵感图库，其他用户可以查看并引用您的 Prompt。'}
                         </p>
                         <button
                             onClick={() => setShowSuccessModal(false)}

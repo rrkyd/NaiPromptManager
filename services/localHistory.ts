@@ -86,6 +86,17 @@ class LocalHistoryService {
             request.onerror = () => reject(request.error);
         });
     }
+
+    async getById(id: string): Promise<LocalGenItem | undefined> {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(id);
+            request.onsuccess = () => resolve(request.result as LocalGenItem | undefined);
+            request.onerror = () => reject(request.error);
+        });
+    }
     
     async clear(): Promise<void> {
         const db = await this.open();
