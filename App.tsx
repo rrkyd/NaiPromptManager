@@ -7,10 +7,11 @@ import { ArtistLibrary } from './components/ArtistLibrary';
 import { ArtistAdmin } from './components/ArtistAdmin';
 import { InspirationGallery } from './components/InspirationGallery';
 import { GenHistory } from './components/GenHistory';
+import { ArtistBatchTester } from './components/ArtistBatchTester';
 import { db } from './services/dbService';
 import { PromptChain, User, Artist, Inspiration, ChainType } from './types';
 
-type ViewState = 'list' | 'characters' | 'edit' | 'library' | 'inspiration' | 'admin' | 'history' | 'playground';
+type ViewState = 'list' | 'characters' | 'edit' | 'library' | 'inspiration' | 'admin' | 'history' | 'playground' | 'batch';
 
 const CACHE_TTL = 60 * 60 * 1000; // 1 Hour Cache
 
@@ -136,7 +137,7 @@ const App = () => {
 
     // Auto-load data based on view, respecting cache
     if (newView === 'list' || newView === 'characters') refreshData();
-    if (newView === 'library') loadArtists();
+    if (newView === 'library' || newView === 'batch') loadArtists();
     if (newView === 'inspiration') loadInspirations();
     if (newView === 'admin') {
       // Admin view handles both artist and user loading internally via props now, 
@@ -374,6 +375,15 @@ const App = () => {
         />;
       case 'history':
         return <GenHistory currentUser={currentUser} notify={notify} onNavigateToPlayground={() => handleNavigate('playground')} />;
+      case 'batch':
+        return (
+          <ArtistBatchTester
+            currentUser={currentUser}
+            artistsData={artistsCache}
+            onRefreshArtists={() => loadArtists(true)}
+            notify={notify}
+          />
+        );
       case 'playground':
         if (!playgroundChain) return <div>Loading...</div>;
         return <ChainEditor
