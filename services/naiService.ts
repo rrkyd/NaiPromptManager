@@ -4,6 +4,23 @@ import { NAIParams } from '../types';
 import { api } from './api';
 import { NAI_QUALITY_TAGS, NAI_UC_PRESETS } from './promptUtils';
 
+/** NAI 返回的 zip 内常同时含 png/jpg 与 metadata.json；取 keys()[0] 可能先拿到 JSON，解码后呈黑屏/花屏 */
+function pickImageEntryName(zip: JSZip): string | null {
+  const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir);
+  const withExt = names.find((f) => /\.(png|jpe?g|webp)$/i.test(f));
+  if (withExt) return withExt;
+  const nonJson = names.find((f) => !f.toLowerCase().endsWith('.json'));
+  return nonJson ?? null;
+}
+
+function mimeFromZipEntryName(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'image/png';
+}
+
 export const generateImage = async (apiKey: string, prompt: string, negative: string, params: NAIParams) => {
   // Logic update: NAI API treats missing seed as random. 0 is a specific seed.
   // We pass seed only if it is a valid number and not -1 (our internal convention for random).
@@ -116,12 +133,12 @@ export const generateImage = async (apiKey: string, prompt: string, negative: st
     'Authorization': `Bearer ${apiKey}`
   });
 
-  // 解析 Zip (逻辑保持不变)
   const zip = await JSZip.loadAsync(blob);
-  const filename = Object.keys(zip.files)[0];
-  if (!filename) throw new Error("No image found in response");
+  const filename = pickImageEntryName(zip);
+  if (!filename) throw new Error('No image found in response (zip has no image entry)');
 
   const fileData = await zip.files[filename].async('base64');
+  const imageMime = mimeFromZipEntryName(filename);
 
   // Extract seed from payload if available, or finding it in metadata would be ideal but for now we rely on what we sent
   // Actually, NAI returns the seed in the response JSON if we used the proper endpoint or read the png info.
@@ -148,5 +165,5 @@ export const generateImage = async (apiKey: string, prompt: string, negative: st
     // But typically NAI returns a JSON alongside the image in the zip.
   }
 
-  return { image: `data:image/png;base64,${fileData}`, seed: actualSeed };
+  return { image: `data:${imageMime};base64,${fileData}`, seed: actualSeed };
 };
