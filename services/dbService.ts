@@ -67,6 +67,15 @@ class DBService {
     await api.put('/admin/guest-setting', { passcode });
   }
 
+  async getSuperguestApiKey(): Promise<string> {
+    const res = await api.get('/admin/superguest-api-key');
+    return res.apiKey || '';
+  }
+
+  async updateSuperguestApiKey(apiKey: string): Promise<void> {
+    await api.put('/admin/superguest-api-key', { apiKey });
+  }
+
   async importArtistFromGithub(name: string, url: string): Promise<void> {
     await api.post('/admin/import-github', { name, url });
   }

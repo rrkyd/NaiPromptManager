@@ -23,7 +23,8 @@ interface ChainEditorProps {
 export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, currentUser, onUpdateChain, onBack, onFork, setIsDirty, notify }) => {
     // Permission Check
     // Guests are allowed to EDIT (in memory) for testing, but NOT SAVE.
-    const isGuest = currentUser.role === 'guest';
+    const isGuest = currentUser.role === 'guest' || currentUser.role === 'superguest';
+    const usesManagedApiKey = currentUser.role === 'superguest';
     const isOwner = !isGuest && (chain.userId === currentUser.id || currentUser.role === 'admin');
     const canEdit = isOwner || isGuest; // Both can interact with inputs now
 
@@ -586,7 +587,7 @@ export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, curr
     };
 
     const handleGenerate = async () => {
-        if (!apiKey) {
+        if (!apiKey && !usesManagedApiKey) {
             setErrorMsg('请在右上角设置 NovelAI API Key');
             return;
         }
@@ -594,7 +595,7 @@ export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, curr
         setErrorMsg(null);
         try {
             const activeParams = { ...params };
-            const result = await generateImage(apiKey, finalPrompt, negativePrompt, activeParams);
+            const result = await generateImage(usesManagedApiKey ? '' : apiKey, finalPrompt, negativePrompt, activeParams);
             setGeneratedImage(result.image);
             // Use actual seed returned from generation
             const finalParams = { ...activeParams, seed: result.seed };
@@ -756,15 +757,21 @@ export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, curr
                         </button>
                     </div>
 
-                    <div className="relative group">
-                        <input
-                            type="password"
-                            placeholder="API Key"
-                            className="w-16 md:w-32 focus:w-40 md:focus:w-64 transition-all bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm text-gray-800 dark:text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
-                            value={apiKey}
-                            onChange={(e) => handleApiKeyChange(e.target.value)}
-                        />
-                    </div>
+                    {usesManagedApiKey ? (
+                        <div className="px-2 py-1 rounded bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-xs font-medium">
+                            SuperGuest 托管 Key
+                        </div>
+                    ) : (
+                        <div className="relative group">
+                            <input
+                                type="password"
+                                placeholder="API Key"
+                                className="w-16 md:w-32 focus:w-40 md:focus:w-64 transition-all bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm text-gray-800 dark:text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
+                                value={apiKey}
+                                onChange={(e) => handleApiKeyChange(e.target.value)}
+                            />
+                        </div>
+                    )}
 
                     {/* Fork / Save to Library Button */}
                     {((!isOwner && !isGuest) || chain.id === 'playground') && (

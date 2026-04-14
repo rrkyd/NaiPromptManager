@@ -50,6 +50,8 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
   const [guestCode, setGuestCode] = useState('');
   const [isUpdatingGuest, setIsUpdatingGuest] = useState(false);
   const [showGuestCode, setShowGuestCode] = useState(false); // Visibility toggle
+  const [superguestApiKey, setSuperguestApiKey] = useState('');
+  const [isUpdatingSuperguestKey, setIsUpdatingSuperguestKey] = useState(false);
 
   // Import State
   const [isImporting, setIsImporting] = useState(false);
@@ -210,6 +212,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
   useEffect(() => {
       if (isAdmin && activeTab === 'users') {
           db.getGuestCode().then(setGuestCode).catch(console.error);
+          db.getSuperguestApiKey().then(setSuperguestApiKey).catch(console.error);
       }
   }, [activeTab, isAdmin]);
 
@@ -271,6 +274,17 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
       await db.updatePassword(myNewPassword);
       setMyNewPassword('');
       alert('密码修改成功');
+  };
+
+  const handleUpdateSuperguestApiKey = async () => {
+      setIsUpdatingSuperguestKey(true);
+      try {
+          await db.updateSuperguestApiKey(superguestApiKey.trim());
+          alert('SuperGuest API Key 已更新');
+      } catch (e) {
+          alert('更新失败');
+      }
+      setIsUpdatingSuperguestKey(false);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -487,6 +501,32 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                     </div>
                 </div>
 
+                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-6 rounded-xl shadow">
+                    <h2 className="font-bold text-gray-800 dark:text-gray-200 mb-2">SuperGuest 测试配置</h2>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                        该 Key 仅后端可见。SuperGuest 用户看不到也不需要配置本地 Key。
+                    </p>
+                    <div className="flex flex-col md:flex-row gap-4">
+                        <input
+                            type="password"
+                            value={superguestApiKey}
+                            onChange={e => setSuperguestApiKey(e.target.value)}
+                            className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-900 dark:text-white font-mono"
+                            placeholder="pst-..."
+                        />
+                        <button
+                            onClick={handleUpdateSuperguestApiKey}
+                            disabled={isUpdatingSuperguestKey}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded transition-colors disabled:opacity-50 flex-shrink-0"
+                        >
+                            {isUpdatingSuperguestKey ? '更新中...' : '更新 Key'}
+                        </button>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
+                        SuperGuest 登录会话 15 分钟自动失效；同一 IP 连续使用 15 分钟后需冷却 15 分钟。
+                    </p>
+                </div>
+
                 <div className="overflow-x-auto">
                     <table className="w-full bg-white dark:bg-gray-800 rounded shadow">
                         <thead><tr className="text-left border-b dark:border-gray-700 text-gray-500 p-2">
@@ -525,6 +565,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                                         >
                                             <option value="user">{ROLE_POLICY.getRoleDisplayName('user')}</option>
                                             <option value="vip">{ROLE_POLICY.getRoleDisplayName('vip')}</option>
+                                            <option value="superguest">{ROLE_POLICY.getRoleDisplayName('superguest')}</option>
                                             <option value="admin">{ROLE_POLICY.getRoleDisplayName('admin')}</option>
                                         </select>
                                     </td>

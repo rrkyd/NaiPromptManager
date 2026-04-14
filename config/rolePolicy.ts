@@ -9,7 +9,7 @@ import type { UserRole } from '../types';
 
 export const ROLE_POLICY = {
   // 有效角色列表
-  VALID_ROLES: ['user', 'vip', 'admin', 'guest'] as const,
+  VALID_ROLES: ['user', 'vip', 'admin', 'guest', 'superguest'] as const,
   
   // 可管理画师的角色（admin + vip）
   CAN_MANAGE_ARTISTS: ['admin', 'vip'] as const,
@@ -20,6 +20,7 @@ export const ROLE_POLICY = {
     vip: 524288000,     // 500MB
     admin: null,        // admin 无限制，使用 null 表示
     guest: 104857600,   // 100MB
+    superguest: 104857600, // 100MB
   } as const,
   
   // 判断是否可管理画师
@@ -41,6 +42,7 @@ export const ROLE_POLICY = {
       vip: 'VIP',
       user: '普通用户',
       guest: '游客',
+      superguest: '测试用户',
     };
     return displayNames[role] || role;
   },
@@ -52,6 +54,7 @@ export const ROLE_POLICY = {
       vip: 'bg-yellow-100 text-yellow-700',
       user: 'bg-green-100 text-green-600',
       guest: 'bg-gray-100 text-gray-600',
+      superguest: 'bg-slate-100 text-slate-600',
     };
     return classes[role] || 'bg-gray-100 text-gray-600';
   },

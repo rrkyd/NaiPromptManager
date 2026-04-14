@@ -163,9 +163,11 @@ export const generateImage = async (apiKey: string, prompt: string, negative: st
   }
 
   // 调用 Worker Proxy, 传递 API Key Header
-  const blob = await api.postBinary('/generate', payload, {
-    'Authorization': `Bearer ${apiKey}`
-  });
+  const extraHeaders: Record<string, string> = {};
+  if (apiKey && apiKey.trim()) {
+    extraHeaders['Authorization'] = `Bearer ${apiKey.trim()}`;
+  }
+  const blob = await api.postBinary('/generate', payload, extraHeaders);
 
   const zip = await JSZip.loadAsync(blob);
   const filename = pickImageEntryName(zip);

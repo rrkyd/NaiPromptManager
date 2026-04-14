@@ -45,7 +45,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentVie
   ];
 
   // Filter out Mine for Guests (History is now allowed)
-  if (currentUser?.role === 'guest') {
+  if (currentUser?.role === 'guest' || currentUser?.role === 'superguest') {
     navItems = navItems.filter(item => item.id !== 'admin');
   }
 
@@ -123,7 +123,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, onNavigate, currentVie
         </nav>
 
         <div className="p-4 border-t border-gray-200 dark:border-gray-800 flex flex-col gap-3">
-          {currentUser && !ROLE_POLICY.isUnlimitedStorage(currentUser.role) && currentUser.role !== 'guest' && (
+          {currentUser && !ROLE_POLICY.isUnlimitedStorage(currentUser.role) && currentUser.role !== 'guest' && currentUser.role !== 'superguest' && (
             <div className="hidden md:block mb-2">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
                 <span>存储空间</span>

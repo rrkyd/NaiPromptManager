@@ -50,7 +50,7 @@ interface Env {
 // 统一的角色策略定义，前后端应共用此语义
 const ROLE_POLICY = {
   // 有效角色列表
-  VALID_ROLES: ['user', 'vip', 'admin', 'guest'] as const,
+  VALID_ROLES: ['user', 'vip', 'admin', 'guest', 'superguest'] as const,
   
   // 可管理画师的角色（admin + vip）
   CAN_MANAGE_ARTISTS: ['admin', 'vip'] as const,
@@ -61,6 +61,7 @@ const ROLE_POLICY = {
     vip: 524288000,     // 500MB
     admin: null,        // admin 无限制，使用 null 表示
     guest: 104857600,   // 100MB
+    superguest: 104857600, // 100MB
   } as const,
   
   // 判断是否可管理画师
@@ -75,6 +76,8 @@ const ROLE_POLICY = {
     return (ROLE_POLICY.DEFAULT_QUOTA as Record<string, number | null>)[role] ?? 314572800;
   }
 };
+
+const isGuestLike = (role: string) => role === 'guest' || role === 'superguest';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -405,6 +408,16 @@ export default {
         `).run();
       } catch (e) { console.error('Daily stats table init failed', e) }
 
+      // superguest 同 IP 冷却窗口（首用开始15分钟可用 + 15分钟冷却）
+      try {
+        await db.prepare(`
+          CREATE TABLE IF NOT EXISTS superguest_ip_limits (
+            ip TEXT PRIMARY KEY,
+            window_start INTEGER NOT NULL
+          )
+        `).run();
+      } catch (e) { console.error('superguest_ip_limits table init failed', e) }
+
       // Default Admin
       try {
         const admin = await db.prepare('SELECT * FROM users WHERE username = ?').bind('admin').first();
@@ -425,6 +438,17 @@ export default {
                .bind(guestId, guestName, Date.now()).run();
         }
       } catch (e) { console.error('Guest init failed', e) }
+
+      // Default SuperGuest
+      try {
+        const superName = 'superguest';
+        const existing = await db.prepare('SELECT * FROM users WHERE username = ?').bind(superName).first<{id: string, role: string}>();
+        if (!existing) {
+             const superId = 'superguest-0000-0000-0000-000000000000';
+             await db.prepare("INSERT INTO users (id, username, password, role, created_at, storage_usage) VALUES (?, ?, 'nai_superguest_123', 'superguest', ?, 0)")
+               .bind(superId, superName, Date.now()).run();
+        }
+      } catch (e) { console.error('SuperGuest init failed', e) }
     };
 
     // --- Authentication Middleware ---
@@ -484,7 +508,9 @@ export default {
           if (!isValid && user.password === password) { isValid = true; const newHash = await bcrypt.hash(password, 10); await db.prepare('UPDATE users SET password = ? WHERE id = ?').bind(newHash, user.id).run(); }
           if (!isValid) return error('用户名或密码错误', 401);
           const sessionId = crypto.randomUUID();
-          const expiresAt = Date.now() + 604800000;
+          const expiresAt = user.role === 'superguest'
+            ? Date.now() + 15 * 60 * 1000
+            : Date.now() + 604800000;
           await db.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').bind(sessionId, user.id, expiresAt).run();
           // 更新最后登录时间
           await db.prepare('UPDATE users SET last_login = ? WHERE id = ?').bind(Date.now(), user.id).run();
@@ -564,6 +590,19 @@ export default {
           return json({ success: true });
       }
 
+      // --- Admin SuperGuest API Key Setting ---
+      if (path === '/api/admin/superguest-api-key' && method === 'GET') {
+          if (currentUser.role !== 'admin') return error('Forbidden', 403);
+          const res = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('superguest_api_key').first<{value: string}>();
+          return json({ apiKey: res?.value || '' });
+      }
+      if (path === '/api/admin/superguest-api-key' && method === 'PUT') {
+          if (currentUser.role !== 'admin') return error('Forbidden', 403);
+          const { apiKey } = await request.json() as any;
+          await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('superguest_api_key', String(apiKey || '').trim()).run();
+          return json({ success: true });
+      }
+
       // --- ADMIN: Usage Statistics ---
       if (path === '/api/admin/stats' && method === 'GET') {
           if (currentUser.role !== 'admin') return error('Forbidden', 403);
@@ -632,9 +671,37 @@ export default {
       // --- NAI Proxy ---
       if (path === '/api/generate' && method === 'POST') {
         const body = await request.json();
-        const clientAuth = request.headers.get('Authorization'); 
-        if (!clientAuth) return error('Missing API Key', 401);
-        const naiRes = await fetch("https://image.novelai.net/ai/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": clientAuth }, body: JSON.stringify(body) });
+        const clientAuth = request.headers.get('Authorization');
+        let authForNai = clientAuth;
+
+        if (currentUser.role === 'superguest') {
+          // 同 IP 15min 使用 + 15min 冷却
+          const ip = request.headers.get('CF-Connecting-IP')
+            || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+            || `uid:${currentUser.id}`;
+          const now = Date.now();
+          const ACTIVE_MS = 15 * 60 * 1000;
+          const CYCLE_MS = 30 * 60 * 1000;
+          const row = await db.prepare('SELECT window_start FROM superguest_ip_limits WHERE ip = ?').bind(ip).first<{window_start: number}>();
+          if (!row) {
+            await db.prepare('INSERT OR REPLACE INTO superguest_ip_limits (ip, window_start) VALUES (?, ?)').bind(ip, now).run();
+          } else {
+            const elapsed = now - row.window_start;
+            if (elapsed >= CYCLE_MS) {
+              await db.prepare('UPDATE superguest_ip_limits SET window_start = ? WHERE ip = ?').bind(now, ip).run();
+            } else if (elapsed >= ACTIVE_MS) {
+              const waitMs = CYCLE_MS - elapsed;
+              const waitMin = Math.ceil(waitMs / 60000);
+              return error(`SuperGuest cooling period. Please wait ${waitMin} minute(s).`, 429);
+            }
+          }
+
+          const keyRow = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('superguest_api_key').first<{value: string}>();
+          authForNai = keyRow?.value ? `Bearer ${keyRow.value}` : '';
+        }
+
+        if (!authForNai) return error('Missing API Key', 401);
+        const naiRes = await fetch("https://image.novelai.net/ai/generate-image", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": authForNai }, body: JSON.stringify(body) });
         if (!naiRes.ok) return error(await naiRes.text(), naiRes.status);
         const blob = await naiRes.blob();
         return new Response(blob, { headers: { ...corsHeaders, 'Content-Type': 'application/zip' } });
@@ -643,7 +710,7 @@ export default {
       // --- File Upload ---
       if (path === '/api/upload' && method === 'POST') {
           if (!env.BUCKET) return error('R2 Bucket not configured', 503);
-          if (currentUser.role === 'guest') return error('Guests cannot upload files', 403);
+          if (isGuestLike(currentUser.role)) return error('Guests cannot upload files', 403);
           const formData = await request.formData();
           const file = formData.get('file');
           if (!file || !(file instanceof File)) return error('Invalid file', 400);
@@ -816,7 +883,7 @@ export default {
         return json(data);
       }
       if (path === '/api/chains' && method === 'POST') {
-        if (currentUser.role === 'guest') return error('Forbidden', 403);
+        if (isGuestLike(currentUser.role)) return error('Forbidden', 403);
         const body = await request.json() as any;
         const id = crypto.randomUUID();
         const type = body.type || 'style'; // Default to style
@@ -833,7 +900,7 @@ export default {
       }
       const chainIdMatch = path.match(/^\/api\/chains\/([^\/]+)$/);
       if (chainIdMatch && method === 'PUT') {
-        if (currentUser.role === 'guest') return error('Forbidden', 403);
+        if (isGuestLike(currentUser.role)) return error('Forbidden', 403);
         const id = chainIdMatch[1];
         const updates = await request.json() as any;
         const chain = await db.prepare('SELECT user_id, preview_image FROM chains WHERE id = ?').bind(id).first<{user_id: string, preview_image: string}>();
@@ -866,7 +933,7 @@ export default {
         return json({ success: true });
       }
       if (chainIdMatch && method === 'DELETE') {
-        if (currentUser.role === 'guest') return error('Forbidden', 403);
+        if (isGuestLike(currentUser.role)) return error('Forbidden', 403);
         const id = chainIdMatch[1];
         const chain = await db.prepare('SELECT user_id, preview_image FROM chains WHERE id = ?').bind(id).first<{user_id: string, preview_image: string}>();
         if (chain) {
@@ -1003,7 +1070,7 @@ export default {
         return json(res.results.map((i: any) => ({ id: i.id, userId: i.user_id, username: i.username, title: i.title, imageUrl: i.image_url, prompt: i.prompt, createdAt: i.created_at })));
       }
       if (path === '/api/inspirations' && method === 'POST') {
-        if (currentUser.role === 'guest') return error('Forbidden', 403);
+        if (isGuestLike(currentUser.role)) return error('Forbidden', 403);
         const body = await request.json() as any;
         let imageUrl = body.imageUrl;
         if (imageUrl && imageUrl.startsWith('data:')) { try { imageUrl = await processImageUpload(env, imageUrl, 'inspirations', body.id || crypto.randomUUID(), currentUser); } catch (e: any) { return error(e.message, 413); } }
@@ -1011,7 +1078,7 @@ export default {
         return json({ success: true });
       }
       if (path === '/api/inspirations/bulk-delete' && method === 'POST') {
-          if (currentUser.role === 'guest') return error('Forbidden', 403);
+          if (isGuestLike(currentUser.role)) return error('Forbidden', 403);
           const { ids } = await request.json() as { ids: string[] };
           for (const id of ids) {
               const item = await db.prepare('SELECT user_id, image_url FROM inspirations WHERE id = ?').bind(id).first<{user_id: string, image_url: string}>();
@@ -1024,7 +1091,7 @@ export default {
           return json({ success: true });
       }
       if (path.startsWith('/api/inspirations/') && method === 'PUT') {
-         if (currentUser.role === 'guest') return error('Forbidden', 403);
+         if (isGuestLike(currentUser.role)) return error('Forbidden', 403);
          const id = path.split('/').pop();
          const updates = await request.json() as any;
          const item = await db.prepare('SELECT user_id FROM inspirations WHERE id = ?').bind(id).first<{user_id: string}>();
@@ -1035,7 +1102,7 @@ export default {
          return json({ success: true });
       }
       if (path.startsWith('/api/inspirations/') && method === 'DELETE') {
-         if (currentUser.role === 'guest') return error('Forbidden', 403);
+         if (isGuestLike(currentUser.role)) return error('Forbidden', 403);
          const id = path.split('/').pop();
          const item = await db.prepare('SELECT user_id, image_url FROM inspirations WHERE id = ?').bind(id).first<{user_id: string, image_url: string}>();
          if (item) {
