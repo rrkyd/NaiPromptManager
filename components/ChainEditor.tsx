@@ -102,6 +102,8 @@ export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, curr
     const [generatedImage, setGeneratedImage] = useState<string | null>(null);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
+    const [showImportJsonModal, setShowImportJsonModal] = useState(false);
+    const [importJsonText, setImportJsonText] = useState('');
     const [showForkModal, setShowForkModal] = useState(false);
 
     // --- Initialization ---
@@ -382,6 +384,83 @@ export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, curr
     const confirmImport = () => {
         if (!importCandidate || !canEdit) return;
         executeImport(importCandidate, importOptions, selectedImportModuleIds);
+    };
+
+    const samplerFromComfy = (raw: unknown, fallback: string): string => {
+        if (typeof raw !== 'string' || !raw.trim()) return fallback;
+        const normalized = raw.trim().toLowerCase().replace(/\s+/g, '_');
+        return normalized.startsWith('k_') ? normalized : `k_${normalized}`;
+    };
+
+    const importComfyWorkflowJson = (raw: string) => {
+        if (!canEdit) return;
+        const json = JSON.parse(raw) as any;
+        const nodes: any[] = Array.isArray(json?.nodes) ? json.nodes : [];
+        if (nodes.length === 0) throw new Error('JSON 中未找到 nodes');
+
+        const ksampler = nodes.find((n) => n?.type === 'KSampler');
+        if (!ksampler) throw new Error('未找到 KSampler 节点');
+        const kv: any[] = Array.isArray(ksampler.widgets_values) ? ksampler.widgets_values : [];
+
+        const links: any[] = Array.isArray(json?.links) ? json.links : [];
+        const linkMap = new Map<number, any[]>();
+        for (const l of links) {
+            if (Array.isArray(l) && typeof l[0] === 'number') linkMap.set(l[0], l);
+        }
+
+        const getInputLink = (node: any, name: string): number | null => {
+            const input = Array.isArray(node?.inputs) ? node.inputs.find((i: any) => i?.name === name) : null;
+            return input && typeof input.link === 'number' ? input.link : null;
+        };
+        const findClipTextByInputLink = (inputLink: number | null): string => {
+            if (inputLink == null) return '';
+            const link = linkMap.get(inputLink);
+            if (!link) return '';
+            const sourceNodeId = link[1];
+            const sourceNode = nodes.find((n) => n?.id === sourceNodeId && n?.type === 'CLIPTextEncode');
+            const txt = sourceNode?.widgets_values?.[0];
+            return typeof txt === 'string' ? txt : '';
+        };
+
+        const positivePrompt = findClipTextByInputLink(getInputLink(ksampler, 'positive'));
+        const negativePromptFromJson = findClipTextByInputLink(getInputLink(ksampler, 'negative'));
+
+        const latentLink = getInputLink(ksampler, 'latent_image');
+        let width = params.width;
+        let height = params.height;
+        if (latentLink != null) {
+            const latentPath = linkMap.get(latentLink);
+            if (latentPath) {
+                const latentNodeId = latentPath[1];
+                const latentNode = nodes.find((n) => n?.id === latentNodeId && n?.type === 'EmptyLatentImage');
+                const latentValues: any[] = Array.isArray(latentNode?.widgets_values) ? latentNode.widgets_values : [];
+                if (typeof latentValues[0] === 'number' && latentValues[0] > 0) width = latentValues[0];
+                if (typeof latentValues[1] === 'number' && latentValues[1] > 0) height = latentValues[1];
+            }
+        }
+
+        const nextSeed = typeof kv[0] === 'number' ? kv[0] : params.seed;
+        const nextSteps = typeof kv[2] === 'number' ? kv[2] : params.steps;
+        const nextScale = typeof kv[3] === 'number' ? kv[3] : params.scale;
+        const nextSampler = samplerFromComfy(kv[4], params.sampler);
+
+        if (!confirm('是否用该 JSON 覆盖当前 Base Prompt、Negative Prompt 和参数设置？\n(Subject 和 模块不会被修改)')) return;
+
+        if (positivePrompt) setBasePrompt(positivePrompt);
+        if (negativePromptFromJson) setNegativePrompt(negativePromptFromJson);
+        setParams(prev => ({
+            ...prev,
+            width,
+            height,
+            steps: nextSteps,
+            scale: nextScale,
+            sampler: nextSampler,
+            seed: nextSeed
+        }));
+        markChange();
+        setShowImportJsonModal(false);
+        setImportJsonText('');
+        notify('JSON 参数已导入。');
     };
 
     // --- Import Logic ---
@@ -763,6 +842,13 @@ export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, curr
                                             >
                                                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                                                 导入图片配置
+                                            </button>
+                                            <button
+                                                onClick={() => setShowImportJsonModal(true)}
+                                                className="text-xs bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 px-2 py-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-900/50 flex items-center gap-1"
+                                            >
+                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h8m-8 4h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+                                                导入JSON
                                             </button>
                                         </div>
                                     )}
@@ -1149,6 +1235,53 @@ export const ChainEditor: React.FC<ChainEditorProps> = ({ chain, allChains, curr
                                 </>
                               );
                             })()}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showImportJsonModal && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+                    onClick={() => setShowImportJsonModal(false)}
+                >
+                    <div
+                        className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-3xl shadow-2xl border border-gray-200 dark:border-gray-700"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-t-xl">
+                            <h3 className="font-bold text-gray-900 dark:text-white">导入 ComfyUI Workflow JSON</h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                仅导入 Base Prompt、Negative Prompt、尺寸、Steps、Scale、Sampler、Seed（Subject 与模块不改）
+                            </p>
+                        </div>
+                        <div className="p-4">
+                            <textarea
+                                value={importJsonText}
+                                onChange={(e) => setImportJsonText(e.target.value)}
+                                placeholder='粘贴 workflow JSON（包含 nodes / links）'
+                                className="w-full h-[360px] p-3 rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-xs font-mono text-gray-800 dark:text-gray-200 outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                        </div>
+                        <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowImportJsonModal(false)}
+                                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-800 dark:hover:text-white transition-colors"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={() => {
+                                    try {
+                                        importComfyWorkflowJson(importJsonText.trim());
+                                    } catch (e: any) {
+                                        notify('JSON 解析失败: ' + (e?.message || String(e)), 'error');
+                                    }
+                                }}
+                                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded shadow-lg shadow-indigo-500/20 transition-all"
+                            >
+                                导入
+                            </button>
                         </div>
                     </div>
                 </div>
