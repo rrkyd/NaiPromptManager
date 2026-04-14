@@ -48,6 +48,8 @@ const App = () => {
   // Guest Login State
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [guestPasscode, setGuestPasscode] = useState('');
+  const [showAdultWarning, setShowAdultWarning] = useState(false);
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
 
   // Theme State
   const [isDark, setIsDark] = useState(() => localStorage.getItem('nai_theme') === 'dark');
@@ -172,8 +174,7 @@ const App = () => {
     setPlaygroundChain(prev => prev ? { ...prev, ...updates } : null);
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const performLogin = async () => {
     setLoginError('');
     try {
       let res;
@@ -189,11 +190,22 @@ const App = () => {
     }
   };
 
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isGuestMode && !adultConfirmed) {
+      setShowAdultWarning(true);
+      return;
+    }
+    await performLogin();
+  };
+
   const handleLogout = async () => {
     await db.logout();
     setCurrentUser(null);
     setLoginUser(''); setLoginPass(''); setGuestPasscode('');
     setIsGuestMode(false);
+    setAdultConfirmed(false);
+    setShowAdultWarning(false);
     // Clear sensitive cache
     setUsersCache(null);
     setInspirationsCache(null);
@@ -248,7 +260,10 @@ const App = () => {
             <div className="flex bg-gray-100 dark:bg-gray-700 p-1 rounded-lg mb-4">
               <button
                 type="button"
-                onClick={() => setIsGuestMode(false)}
+                onClick={() => {
+                  setIsGuestMode(false);
+                  setShowAdultWarning(false);
+                }}
                 className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-all ${!isGuestMode ? 'bg-white dark:bg-gray-600 shadow text-indigo-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}
               >
                 账号登录
@@ -289,6 +304,45 @@ const App = () => {
             <button onClick={toggleTheme} className="hover:text-gray-600 dark:hover:text-gray-200">{isDark ? '切换亮色' : '切换深色'}</button>
           </div>
         </div>
+        {showAdultWarning && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-2xl p-6">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">18+ 内容提示</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                本站可能包含成人向内容。继续访问表示您已年满 18 岁，并同意自行承担浏览风险。
+              </p>
+              <label className="flex items-start gap-2 mb-5">
+                <input
+                  type="checkbox"
+                  checked={adultConfirmed}
+                  onChange={(e) => setAdultConfirmed(e.target.checked)}
+                  className="mt-1 w-4 h-4"
+                />
+                <span className="text-xs text-gray-600 dark:text-gray-300">我已年满 18 岁，并同意继续访问。</span>
+              </label>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdultWarning(false)}
+                  className="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-sm text-gray-600 dark:text-gray-300"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={!adultConfirmed}
+                  onClick={async () => {
+                    setShowAdultWarning(false);
+                    await performLogin();
+                  }}
+                  className="px-4 py-2 rounded bg-indigo-600 text-white text-sm font-bold disabled:opacity-50"
+                >
+                  同意并继续
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
