@@ -500,8 +500,15 @@ export default {
             ? Date.now() + 15 * 60 * 1000
             : Date.now() + 86400000;
           if (matched.role === 'superguest') {
-            // superguest 全局同时在线限制为 1：新登录会顶掉所有 superguest 旧会话
-            await db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role = 'superguest')").run();
+            // superguest 全局同时在线限制为 1：先到先得，后到拒绝
+            const online = await db.prepare(`
+              SELECT s.id
+              FROM sessions s
+              JOIN users u ON u.id = s.user_id
+              WHERE u.role = 'superguest' AND s.expires_at > ?
+              LIMIT 1
+            `).bind(Date.now()).first<{id: string}>();
+            if (online) return error('已达到最大人数，请稍后重试', 429);
           }
           await db.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').bind(sessionId, matched.id, expiresAt).run();
           // 记录登录日志和每日统计
