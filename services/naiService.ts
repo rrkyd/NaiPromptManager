@@ -13,12 +13,46 @@ function pickImageEntryName(zip: JSZip): string | null {
   return nonJson ?? null;
 }
 
+function detectMimeFromBytes(bytes: Uint8Array): string | null {
+  // PNG signature
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) return 'image/png';
+  // JPEG signature
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  // WebP: RIFF....WEBP
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) return 'image/webp';
+  return null;
+}
+
 function mimeFromZipEntryName(name: string): string {
   const lower = name.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.webp')) return 'image/webp';
   return 'image/png';
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const slice = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode(...slice);
+  }
+  return btoa(binary);
 }
 
 export const generateImage = async (apiKey: string, prompt: string, negative: string, params: NAIParams) => {
@@ -137,8 +171,22 @@ export const generateImage = async (apiKey: string, prompt: string, negative: st
   const filename = pickImageEntryName(zip);
   if (!filename) throw new Error('No image found in response (zip has no image entry)');
 
-  const fileData = await zip.files[filename].async('base64');
-  const imageMime = mimeFromZipEntryName(filename);
+  // 先按扩展名取；若不可信，再回退到“按文件头魔数识别”避免黑屏
+  let bytes = await zip.files[filename].async('uint8array');
+  let imageMime = detectMimeFromBytes(bytes) ?? mimeFromZipEntryName(filename);
+  if (!detectMimeFromBytes(bytes)) {
+    const allFiles = Object.keys(zip.files).filter((n) => !zip.files[n].dir);
+    for (const n of allFiles) {
+      const b = await zip.files[n].async('uint8array');
+      const m = detectMimeFromBytes(b);
+      if (m) {
+        bytes = b;
+        imageMime = m;
+        break;
+      }
+    }
+  }
+  const fileData = uint8ToBase64(bytes);
 
   // Extract seed from payload if available, or finding it in metadata would be ideal but for now we rely on what we sent
   // Actually, NAI returns the seed in the response JSON if we used the proper endpoint or read the png info.
