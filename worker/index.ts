@@ -500,8 +500,8 @@ export default {
             ? Date.now() + 15 * 60 * 1000
             : Date.now() + 86400000;
           if (matched.role === 'superguest') {
-            // superguest 同时在线限制为 1：新登录会顶掉旧会话
-            await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(matched.id).run();
+            // superguest 全局同时在线限制为 1：新登录会顶掉所有 superguest 旧会话
+            await db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role = 'superguest')").run();
           }
           await db.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').bind(sessionId, matched.id, expiresAt).run();
           // 记录登录日志和每日统计
