@@ -50,6 +50,8 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
   const [guestCode, setGuestCode] = useState('');
   const [isUpdatingGuest, setIsUpdatingGuest] = useState(false);
   const [showGuestCode, setShowGuestCode] = useState(false); // Visibility toggle
+  const [superguestCode, setSuperguestCode] = useState('');
+  const [isUpdatingSuperguestCode, setIsUpdatingSuperguestCode] = useState(false);
   const [superguestApiKey, setSuperguestApiKey] = useState('');
   const [isUpdatingSuperguestKey, setIsUpdatingSuperguestKey] = useState(false);
 
@@ -212,6 +214,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
   useEffect(() => {
       if (isAdmin && activeTab === 'users') {
           db.getGuestCode().then(setGuestCode).catch(console.error);
+          db.getSuperguestCode().then(setSuperguestCode).catch(console.error);
           db.getSuperguestApiKey().then(setSuperguestApiKey).catch(console.error);
       }
   }, [activeTab, isAdmin]);
@@ -285,6 +288,16 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
           alert('更新失败');
       }
       setIsUpdatingSuperguestKey(false);
+  };
+
+  const handleUpdateSuperguestCode = async () => {
+      if (!superguestCode) return;
+      setIsUpdatingSuperguestCode(true);
+      try {
+          await db.updateSuperguestCode(superguestCode);
+          alert('SuperGuest 口令已更新');
+      } catch(e) { alert('更新失败'); }
+      setIsUpdatingSuperguestCode(false);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -469,7 +482,7 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                 {/* Guest Settings Block */}
                 <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-6 rounded-xl shadow">
                     <h2 className="font-bold text-gray-800 dark:text-gray-200 mb-2">游客访问设置</h2>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">设置游客登录时使用的全局口令。下方显示的是当前生效的口令。</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">设置 guest 登录时使用的口令。</p>
                     <div className="flex flex-col md:flex-row gap-4">
                         <div className="relative flex-1">
                             <input 
@@ -497,6 +510,27 @@ export const ArtistAdmin: React.FC<ExtendedArtistAdminProps> = ({
                             className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded transition-colors disabled:opacity-50 flex-shrink-0"
                         >
                             {isUpdatingGuest ? '更新中...' : '更新口令'}
+                        </button>
+                    </div>
+                </div>
+
+                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-6 rounded-xl shadow">
+                    <h2 className="font-bold text-gray-800 dark:text-gray-200 mb-2">SuperGuest 访问设置</h2>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">设置 superguest 独立口令（与 guest 分离）。</p>
+                    <div className="flex flex-col md:flex-row gap-4">
+                        <input
+                            type="password"
+                            value={superguestCode}
+                            onChange={e => setSuperguestCode(e.target.value)}
+                            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-900 dark:text-white font-mono"
+                            placeholder="superguest 口令"
+                        />
+                        <button
+                            onClick={handleUpdateSuperguestCode}
+                            disabled={isUpdatingSuperguestCode}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded transition-colors disabled:opacity-50 flex-shrink-0"
+                        >
+                            {isUpdatingSuperguestCode ? '更新中...' : '更新口令'}
                         </button>
                     </div>
                 </div>

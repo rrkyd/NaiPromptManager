@@ -67,6 +67,15 @@ class DBService {
     await api.put('/admin/guest-setting', { passcode });
   }
 
+  async getSuperguestCode(): Promise<string> {
+    const res = await api.get('/admin/superguest-setting');
+    return res.passcode || '';
+  }
+
+  async updateSuperguestCode(passcode: string): Promise<void> {
+    await api.put('/admin/superguest-setting', { passcode });
+  }
+
   async getSuperguestApiKey(): Promise<string> {
     const res = await api.get('/admin/superguest-api-key');
     return res.apiKey || '';

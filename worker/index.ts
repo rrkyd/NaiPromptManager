@@ -485,14 +485,13 @@ export default {
       if (path === '/api/auth/guest-login' && method === 'POST') {
           const { passcode } = await request.json() as any;
           if (!passcode) return error('请输入访问口令', 400);
-          let guestLikeUsers = (await db.prepare("SELECT * FROM users WHERE role IN ('guest','superguest') ORDER BY CASE role WHEN 'superguest' THEN 0 ELSE 1 END").all<{id: string, username: string, role: string, password: string}>()).results || [];
+          let guestLikeUsers = (await db.prepare("SELECT * FROM users WHERE role IN ('guest','superguest')").all<{id: string, username: string, role: string, password: string}>()).results || [];
           if (!guestLikeUsers.length) {
             await initDB();
-            guestLikeUsers = (await db.prepare("SELECT * FROM users WHERE role IN ('guest','superguest') ORDER BY CASE role WHEN 'superguest' THEN 0 ELSE 1 END").all<{id: string, username: string, role: string, password: string}>()).results || [];
+            guestLikeUsers = (await db.prepare("SELECT * FROM users WHERE role IN ('guest','superguest')").all<{id: string, username: string, role: string, password: string}>()).results || [];
           }
           if (!guestLikeUsers.length) return error('System Error', 500);
 
-          // superguest 与 guest 共用“游客访问设置”的密码；优先匹配 superguest
           const matched = guestLikeUsers.find(u => passcode === u.password);
           if (!matched) return error('访问口令错误', 401);
 
@@ -500,6 +499,10 @@ export default {
           const expiresAt = matched.role === 'superguest'
             ? Date.now() + 15 * 60 * 1000
             : Date.now() + 86400000;
+          if (matched.role === 'superguest') {
+            // superguest 同时在线限制为 1：新登录会顶掉旧会话
+            await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(matched.id).run();
+          }
           await db.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').bind(sessionId, matched.id, expiresAt).run();
           // 记录登录日志和每日统计
           await logAccess(db, { id: matched.id, username: matched.username, role: matched.role }, request, 'guest_login');
@@ -588,14 +591,27 @@ export default {
       // --- Admin Guest Setting ---
       if (path === '/api/admin/guest-setting' && method === 'GET') {
           if (currentUser.role !== 'admin') return error('Forbidden', 403);
-          let guest = await db.prepare("SELECT password FROM users WHERE role IN ('superguest','guest') ORDER BY CASE role WHEN 'superguest' THEN 0 ELSE 1 END").first<{password: string}>();
-          if (!guest) { await initDB(); guest = await db.prepare("SELECT password FROM users WHERE role IN ('superguest','guest') ORDER BY CASE role WHEN 'superguest' THEN 0 ELSE 1 END").first<{password: string}>(); }
+          let guest = await db.prepare("SELECT password FROM users WHERE role = 'guest'").first<{password: string}>();
+          if (!guest) { await initDB(); guest = await db.prepare("SELECT password FROM users WHERE role = 'guest'").first<{password: string}>(); }
           return json({ passcode: guest?.password });
       }
       if (path === '/api/admin/guest-setting' && method === 'PUT') {
           if (currentUser.role !== 'admin') return error('Forbidden', 403);
           const { passcode } = await request.json() as any;
-          await db.prepare("UPDATE users SET password = ? WHERE role IN ('guest','superguest')").bind(passcode).run();
+          await db.prepare("UPDATE users SET password = ? WHERE role = 'guest'").bind(passcode).run();
+          return json({ success: true });
+      }
+
+      if (path === '/api/admin/superguest-setting' && method === 'GET') {
+          if (currentUser.role !== 'admin') return error('Forbidden', 403);
+          let s = await db.prepare("SELECT password FROM users WHERE role = 'superguest'").first<{password: string}>();
+          if (!s) { await initDB(); s = await db.prepare("SELECT password FROM users WHERE role = 'superguest'").first<{password: string}>(); }
+          return json({ passcode: s?.password || '' });
+      }
+      if (path === '/api/admin/superguest-setting' && method === 'PUT') {
+          if (currentUser.role !== 'admin') return error('Forbidden', 403);
+          const { passcode } = await request.json() as any;
+          await db.prepare("UPDATE users SET password = ? WHERE role = 'superguest'").bind(passcode).run();
           return json({ success: true });
       }
 
